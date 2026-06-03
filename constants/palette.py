@@ -4,8 +4,6 @@ Extraído de ui_app.py — Paso 1 de la refactorización modular.
 """
 
 # ── Credenciales y configuración por defecto ────────────────────────────────
-USUARIO = ""
-PASSWORD = ""
 IMAP_SERVER = "imap.empresa.com"
 PUERTO_IMAP = 143
 

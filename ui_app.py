@@ -26,6 +26,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import email
 import shutil
+import dotenv
 
 # ── Auto-install UI dependencies ──────────────────────────────────────────
 def _instalar_deps_ui():
@@ -70,13 +71,37 @@ import openpyxl
 import xlrd
 
 from constants import Palette, FONT_FAMILY, FONT_MONO
-from constants import USUARIO, PASSWORD, IMAP_SERVER, PUERTO_IMAP
+from constants import IMAP_SERVER, PUERTO_IMAP
 from constants import DESTINATARIOS_GRUPAL, DESTINATARIOS_INDIVIDUAL
 
 from utils import (buscar_archivo_en_pendrive, formatear_fecha_excel,
                     adjuntar_archivo, preguntar_reintentar,
                     celda_es_mergeada, primera_fila_libre, ya_existe_en_hoja,
                     buscar_bl_por_carpeta_xlsx, buscar_bl_por_carpeta_xls)
+
+# ── .env loading for secret key ─────────────────────────────────────────
+_frozen = getattr(sys, 'frozen', False)
+_base_dir = os.path.dirname(sys.executable) if _frozen else os.path.dirname(__file__)
+_dotenv_path = os.path.join(_base_dir, ".env")
+
+dotenv.load_dotenv(_dotenv_path)
+
+
+def _ensure_secret_key(dotenv_path: str) -> None:
+    key = os.environ.get("MULTIAGENTE_SECRET_KEY")
+    if key:
+        return
+    import secrets
+    key = secrets.token_hex(32)
+    try:
+        with open(dotenv_path, "w", encoding="utf-8") as f:
+            f.write(f"MULTIAGENTE_SECRET_KEY={key}\n")
+    except OSError:
+        print(f"[WARN] Could not write {dotenv_path} — key in memory only for this session.")
+    os.environ["MULTIAGENTE_SECRET_KEY"] = key
+
+
+_ensure_secret_key(_dotenv_path)
 
 # ── Redirector de stdout al widget de log ───────────────────────────────
 class OutputRedirector:
@@ -2170,8 +2195,8 @@ class App(ctk.CTk):
         import imaplib
         srv = self._cfg_obtener_correo("imap_server", IMAP_SERVER)
         prt = self._cfg_obtener_correo("imap_puerto", PUERTO_IMAP)
-        usr = self._cfg_obtener_correo("usuario", USUARIO)
-        pwd = self._cfg_obtener_correo("password", PASSWORD)
+        usr = self._cfg_obtener_correo("usuario", "")
+        pwd = self._cfg_obtener_correo("password", "")
         for intento in range(3):
             try:
                 mail = imaplib.IMAP4(srv, prt)
@@ -5318,7 +5343,7 @@ class App(ctk.CTk):
 
                     msg_ind = MIMEMultipart()
                     msg_ind["Subject"] = asunto
-                    msg_ind["From"] = self._cfg_obtener_correo("usuario", USUARIO)
+                    msg_ind["From"] = self._cfg_obtener_correo("usuario", "")
                     msg_ind["To"] = ", ".join(self._cfg_obtener_correo("destinatarios_individual", DESTINATARIOS_INDIVIDUAL))
                     msg_ind.attach(MIMEText(cuerpo, "plain"))
 
@@ -5343,7 +5368,7 @@ class App(ctk.CTk):
 
                     msg_ind = MIMEMultipart()
                     msg_ind["Subject"] = asunto
-                    msg_ind["From"] = self._cfg_obtener_correo("usuario", USUARIO)
+                    msg_ind["From"] = self._cfg_obtener_correo("usuario", "")
                     msg_ind["To"] = ", ".join(self._cfg_obtener_correo("destinatarios_individual", DESTINATARIOS_INDIVIDUAL))
                     msg_ind.attach(MIMEText(f"{asunto}\n", "plain"))
 
@@ -5360,7 +5385,7 @@ class App(ctk.CTk):
         if todas_las_planillas and incluir_plt:
             msg_grupal = MIMEMultipart()
             msg_grupal["Subject"] = "CARGA TERRESTRE"
-            msg_grupal["From"] = self._cfg_obtener_correo("usuario", USUARIO)
+            msg_grupal["From"] = self._cfg_obtener_correo("usuario", "")
             msg_grupal["To"] = ", ".join(self._cfg_obtener_correo("destinatarios_grupal", DESTINATARIOS_GRUPAL))
 
             # Buscar CARGA TERRESTRE antes de armar el cuerpo
@@ -5405,8 +5430,8 @@ class App(ctk.CTk):
         if correos_a_subir:
             srv = self._cfg_obtener_correo("imap_server", IMAP_SERVER)
             prt = self._cfg_obtener_correo("imap_puerto", PUERTO_IMAP)
-            usr = self._cfg_obtener_correo("usuario", USUARIO)
-            pwd = self._cfg_obtener_correo("password", PASSWORD)
+            usr = self._cfg_obtener_correo("usuario", "")
+            pwd = self._cfg_obtener_correo("password", "")
             self._log(f"Conectando con {srv}... Subiendo {len(correos_a_subir)} correos en paralelo...")
             mensajes = [m for _, _, m, _ in correos_a_subir]
 
@@ -5760,14 +5785,18 @@ class App(ctk.CTk):
     def _cfg_obtener(self, seccion, clave, default):
         val = self.config.get(seccion, {}).get(clave, default)
         if seccion == "seguridad" and clave == "password" and val != default:
-            return self._decrypt_val(val, "ENCRYPTION_KEY_PLACEHOLDER")
+            val = self._decrypt_val(val, os.environ["MULTIAGENTE_SECRET_KEY"])
+            if val.startswith("enc::"):
+                return default
         return val
 
     def _cfg_obtener_correo(self, clave, default):
         val = self._cfg_obtener("correo", clave, default)
         if clave == "password" and val != default:
-            key = self._master_pw_cache if self._master_pw_cache else "ENCRYPTION_KEY_PLACEHOLDER"
-            return self._decrypt_val(val, key)
+            key = self._master_pw_cache if self._master_pw_cache else os.environ["MULTIAGENTE_SECRET_KEY"]
+            val = self._decrypt_val(val, key)
+            if val.startswith("enc::"):
+                return default
         return val
 
     def _cfg_obtener_docs(self, clave, default):
@@ -6074,9 +6103,9 @@ class App(ctk.CTk):
     def _ajustes_tab_correo(self, parent):
         self._ajustes_seccion(parent, "Credenciales IMAP")
         self._ent_correo_usuario = self._ajustes_row(
-            parent, "Usuario (email):", self._cfg_obtener_correo("usuario", USUARIO), width=300)
+            parent, "Usuario (email):", self._cfg_obtener_correo("usuario", ""), width=300)
         self._ent_correo_password = self._ajustes_row(
-            parent, "Contraseña:", self._cfg_obtener_correo("password", PASSWORD), show="*", width=220)
+            parent, "Contraseña:", self._cfg_obtener_correo("password", ""), show="*", width=220)
         self._ent_correo_imap = self._ajustes_row(
             parent, "Servidor IMAP:", self._cfg_obtener_correo("imap_server", IMAP_SERVER), width=280)
         self._ent_correo_puerto = self._ajustes_row(
@@ -6459,7 +6488,7 @@ class App(ctk.CTk):
 
             # Correo
             mail_pw = self._ent_correo_password.get().strip()
-            key = pw1 if pw1 else "ENCRYPTION_KEY_PLACEHOLDER"
+            key = pw1 if pw1 else os.environ["MULTIAGENTE_SECRET_KEY"]
             correo_cfg = {
                 "usuario": self._ent_correo_usuario.get().strip(),
                 "password": self._encrypt_val(mail_pw, key),
@@ -6537,7 +6566,7 @@ class App(ctk.CTk):
                 self.config["google_drive"]["token"] = token_existente
 
             self.config["seguridad"] = {
-                "password": self._encrypt_val(pw1, "ENCRYPTION_KEY_PLACEHOLDER"),
+                "password": self._encrypt_val(pw1, os.environ["MULTIAGENTE_SECRET_KEY"]),
             }
 
             self._guardar_config()
@@ -6599,7 +6628,10 @@ class App(ctk.CTk):
             decrypted = bytes(a ^ b for a, b in zip(encrypted, derived))
             return decrypted.decode('utf-8')
         except Exception as e:
-            self._log(f"ERROR al desencriptar: {e}")
+            try:
+                self._log(f"ERROR al desencriptar: {e}")
+            except AttributeError:
+                print(f"[WARN] Decrypt failed (log_queue not ready): {e}")
             return value
 
     # ═══════════════════════════════════════════════════════════════════
