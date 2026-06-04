@@ -1947,7 +1947,7 @@ class App(ctk.CTk):
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
         )
-        self._mail_entry_cantidad.insert(0, "2")
+        self._mail_entry_cantidad.insert(0, self.config.get("descarga_mails", {}).get("papeles", "2"))
         self._mail_entry_cantidad.pack(side="left")
 
         ctk.CTkLabel(
@@ -1986,7 +1986,7 @@ class App(ctk.CTk):
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
         )
-        self._mail_entry_cantidad_reglas.insert(0, "4")
+        self._mail_entry_cantidad_reglas.insert(0, self.config.get("descarga_mails", {}).get("reglas", "4"))
         self._mail_entry_cantidad_reglas.pack(side="left")
 
         ctk.CTkLabel(
@@ -2019,7 +2019,7 @@ class App(ctk.CTk):
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
         )
-        self._mail_entry_sin_filtro.insert(0, "20")
+        self._mail_entry_sin_filtro.insert(0, self.config.get("descarga_mails", {}).get("sin_filtro", "20"))
         self._mail_entry_sin_filtro.pack(side="left", padx=(4, 0))
 
         ctk.CTkLabel(
@@ -5902,6 +5902,7 @@ class App(ctk.CTk):
         tab_names = [
             ("correo", "📧  Correo"),
             ("documentos", "📄  Documentos"),
+            ("descarga", "📩  Descarga Mails"),
             ("rutas", "📁  Rutas"),
             ("valores", "💰  Valores"),
             ("seguridad", "🔒  Seguridad"),
@@ -5944,6 +5945,7 @@ class App(ctk.CTk):
 
         self._ajustes_tab_correo(self._ajustes_frames["correo"])
         self._ajustes_tab_documentos(self._ajustes_frames["documentos"])
+        self._ajustes_tab_descarga(self._ajustes_frames["descarga"])
         self._ajustes_tab_rutas(self._ajustes_frames["rutas"])
         self._ajustes_tab_valores(self._ajustes_frames["valores"])
         self._ajustes_tab_seguridad(self._ajustes_frames["seguridad"])
@@ -6202,6 +6204,30 @@ class App(ctk.CTk):
             extra="Busca FECHA CRT Y ORIGINAL.xlsx")
 
     # ── TAB: VALORES ──────────────────────────────────────────────────
+    def _ajustes_tab_descarga(self, parent):
+        self._ajustes_seccion(parent, "Cantidad de Mails a Buscar")
+        ctk.CTkLabel(
+            parent,
+            text="Estos valores se usan en el panel Correos para limitar la búsqueda.",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=Palette.TEXT_MUTED,
+        ).pack(anchor="w", padx=14, pady=(0, 4))
+
+        dm = self.config.get("descarga_mails", {})
+        papeles_default = dm.get("papeles", "2")
+        reglas_default = dm.get("reglas", "4")
+        sin_filtro_default = dm.get("sin_filtro", "20")
+
+        self._ent_descarga_papeles = self._ajustes_row(
+            parent, "📥  Buscar y Descargar (papeles):", papeles_default,
+            extra="Mails más nuevos con 'papeles' en el asunto.", width=80)
+        self._ent_descarga_reglas = self._ajustes_row(
+            parent, "🔍  Buscar con reglas:", reglas_default,
+            extra="Mails que coinciden con las reglas configuradas.", width=80)
+        self._ent_descarga_sin_filtro = self._ajustes_row(
+            parent, "📋  Mail sin filtros:", sin_filtro_default,
+            extra="Últimos mails sin ningún filtro.", width=80)
+
     def _ajustes_tab_valores(self, parent):
         self._ajustes_seccion(parent, "Tarifas de Planilla COBRO")
         self._ent_precio_carpeta = self._ajustes_row(
@@ -6339,6 +6365,21 @@ class App(ctk.CTk):
                 "mic_sellos": self._ent_ruta_mic_sellos.get().strip(),
                 "crt_original": self._ent_ruta_crt_original.get().strip(),
             }
+
+            # Descarga Mails — guardar y sincronizar entries del panel Correos
+            self.config["descarga_mails"] = {
+                "papeles": self._ent_descarga_papeles.get().strip(),
+                "reglas": self._ent_descarga_reglas.get().strip(),
+                "sin_filtro": self._ent_descarga_sin_filtro.get().strip(),
+            }
+            # Sincronizar los entries del panel Correos (si aún existen)
+            for attr, src in [('_mail_entry_cantidad', '_ent_descarga_papeles'),
+                              ('_mail_entry_cantidad_reglas', '_ent_descarga_reglas'),
+                              ('_mail_entry_sin_filtro', '_ent_descarga_sin_filtro')]:
+                w = getattr(self, attr, None)
+                if w is not None and w.winfo_exists():
+                    w.delete(0, "end")
+                    w.insert(0, getattr(self, src).get().strip())
 
             # Valores
             try:
