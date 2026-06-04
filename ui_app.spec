@@ -32,6 +32,7 @@ a = Analysis(
         'pythoncom',
         'email',
         'imaplib',
+        'dotenv',
     ],
     hookspath=[],
     hooksconfig={},
