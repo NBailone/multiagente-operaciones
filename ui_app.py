@@ -3910,7 +3910,15 @@ class App(ctk.CTk):
                         ws_sobres = wb_sobres[sheet]
                         break
                 if not ws_sobres:
-                    ws_sobres = wb_sobres.active
+                    self._log(f"ERROR: No se encontró hoja del mes '{mes_actual}' en SOBRES_2026.xlsx.")
+                    self.after(0, lambda m=mes_actual: messagebox.showerror(
+                        "Hoja del mes no encontrada",
+                        f"No se encontró la hoja \"{m}\" en SOBRES_2026.xlsx.\n\n"
+                        f"Verifique que el archivo contenga una hoja con el nombre del mes actual.\n\n"
+                        f"Operación cancelada."
+                    ))
+                    wb_sobres.close()
+                    return
                 self._log(f"SOBRES_2026.xlsx detectada → {ruta_sobres} · hoja '{ws_sobres.title}'")
             except Exception as e:
                 self._log(f"Error al abrir SOBRES_2026.xlsx: {e}")
@@ -4265,7 +4273,15 @@ class App(ctk.CTk):
                     ws_cobro = wb_cobro[sheet]
                     break
             if not ws_cobro:
-                ws_cobro = wb_cobro.active
+                self._log(f"ERROR: No se encontró hoja del mes '{mes_actual}' en COBRO_2026.xlsx.")
+                self.after(0, lambda m=mes_actual: messagebox.showerror(
+                    "Hoja del mes no encontrada",
+                    f"No se encontró la hoja \"{m}\" en COBRO_2026.xlsx.\n\n"
+                    f"Verifique que el archivo contenga una hoja con el nombre del mes actual.\n\n"
+                    f"Operación cancelada."
+                ))
+                wb_cobro.close()
+                return {"ok": False, "detalle": f"Hoja '{mes_actual}' no encontrada"}
             self._log(f"COBRO_2026.xlsx detectada → hoja '{ws_cobro.title}'")
         except Exception as e:
             self._log(f"ERROR al abrir COBRO_2026.xlsx: {e}")
