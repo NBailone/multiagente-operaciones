@@ -27,6 +27,7 @@ from email.mime.text import MIMEText
 import email
 import shutil
 import dotenv
+from PIL import Image
 
 # ── Auto-install UI dependencies ──────────────────────────────────────────
 def _instalar_deps_ui():
@@ -337,21 +338,36 @@ class App(ctk.CTk):
 
         # ── Logo / Título ────────────────────────────────────────────
         header = ctk.CTkFrame(
-            self.sidebar, fg_color="transparent", height=52
+            self.sidebar, fg_color="transparent", height=80
         )
-        header.pack(fill="x", padx=14, pady=(18, 2))
+        header.pack(fill="x", padx=14, pady=(4, 0))
         header.pack_propagate(False)
 
-        ctk.CTkLabel(
-            header,
-            text="MULTIAGENTE",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=20, weight="bold"),
-            text_color=Palette.ACCENT,
-        ).pack(anchor="w")
+        # Cargar icono de la aplicación
+        try:
+            icon_dir = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
+            icon_path = os.path.join(icon_dir, "icono.ico")
+            if os.path.exists(icon_path):
+                pil_image = Image.open(icon_path)
+                pil_image = pil_image.resize((72, 72), Image.LANCZOS)
+                self._logo_icon = ctk.CTkImage(pil_image, size=(72, 72))
+                ctk.CTkLabel(header, image=self._logo_icon, text="").pack(expand=True)
+            else:
+                ctk.CTkLabel(
+                    header, text="MULTIAGENTE",
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=20, weight="bold"),
+                    text_color=Palette.ACCENT,
+                ).pack(anchor="w")
+        except Exception:
+            ctk.CTkLabel(
+                header, text="MULTIAGENTE",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=20, weight="bold"),
+                text_color=Palette.ACCENT,
+            ).pack(anchor="w")
 
         ctk.CTkFrame(
             self.sidebar, fg_color=Palette.DIVIDER, height=1
-        ).pack(fill="x", padx=14, pady=(8, 12))
+        ).pack(fill="x", padx=14, pady=(4, 4))
 
         # ── Navegación ───────────────────────────────────────────────
         nav_label = ctk.CTkLabel(
@@ -3596,15 +3612,15 @@ class App(ctk.CTk):
         """Popup con botones para abrir/editar archivos Excel."""
         popup = ctk.CTkToplevel(self)
         popup.title("Editar Excels")
-        popup.geometry("360x320")
+        popup.geometry("360x360")
         popup.configure(fg_color=Palette.BG_CARD)
         popup.transient(self)
         popup.lift()
         popup.grab_set()
         popup.update_idletasks()
         px = self.winfo_x() + (self.winfo_width() - 360) // 2
-        py = self.winfo_y() + (self.winfo_height() - 320) // 2
-        popup.geometry(f"360x320+{px}+{py}")
+        py = self.winfo_y() + (self.winfo_height() - 360) // 2
+        popup.geometry(f"360x360+{px}+{py}")
 
         ctk.CTkLabel(popup, text="EDITAR EXCELS",
                      font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
@@ -3616,6 +3632,8 @@ class App(ctk.CTk):
             ("PC.xlsx", self._cfg_obtener_rutas("pc", os.path.join("TRABAJO", "01_PLANILLAS"))),
             ("FECHA MIC Y SELLOS.xlsx", self._cfg_obtener_rutas("mic_sellos", os.path.join("TRABAJO", "01_PLANILLAS"))),
             ("FECHA CRT Y ORIGINAL.xlsx", self._cfg_obtener_rutas("crt_original", os.path.join("TRABAJO", "01_PLANILLAS"))),
+            (self._cfg_obtener_rutas("carga_terrestre_nombre", "CARGA TERRESTRE.xlsx"),
+             self._cfg_obtener_rutas("carga_terrestre_carpeta", os.path.join("TRABAJO", "01_PLANILLAS"))),
         ]
 
         def _abrir(nombre, carpeta):
