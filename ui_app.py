@@ -1067,7 +1067,7 @@ class App(ctk.CTk):
             text_color=Palette.ACCENT,
         ).pack(pady=(20, 16))
 
-        var_mic = ctk.BooleanVar(value=True)
+        var_mic = ctk.BooleanVar(value=False)
         var_crt = ctk.BooleanVar(value=False)
         var_pe = ctk.BooleanVar(value=False)
 
@@ -1652,7 +1652,7 @@ class App(ctk.CTk):
             corner_radius=6,
             height=34,
             width=200,
-            command=self._ejecutar_agente_planillas,
+            command=self._popup_completar_planillas,
         )
         self.btn_ejecutar_planillas.pack(side="left", padx=4, pady=4)
 
@@ -1986,7 +1986,7 @@ class App(ctk.CTk):
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
         )
-        self._mail_entry_cantidad_reglas.insert(0, "10")
+        self._mail_entry_cantidad_reglas.insert(0, "4")
         self._mail_entry_cantidad_reglas.pack(side="left")
 
         ctk.CTkLabel(
@@ -2007,7 +2007,7 @@ class App(ctk.CTk):
             toolbar1,
             text="📋  Mail sin filtros",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            fg_color=Palette.WARNING, hover_color=Palette.WARNING_HOVER,
+            fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=30, width=135,
             command=self._mail_ejecutar_ultimos,
         )
@@ -2040,7 +2040,7 @@ class App(ctk.CTk):
             toolbar2,
             text="⬇  Descargar seleccionados",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            fg_color="#6B8E23", hover_color="#5A7A1D",
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=30, width=180,
             command=self._mail_descargar_seleccionados,
         )
@@ -2236,33 +2236,61 @@ class App(ctk.CTk):
                     raise e
 
     def _mail_buscar_headers(self, mail, todos_ids, solo_papeles=True):
-        """Helper: busca headers y devuelve [(fecha_dt, fecha_str, mid, asunto), ...]."""
+        """Helper: busca headers y devuelve [(fecha_dt, fecha_str, mid, asunto), ...].
+        Usa un solo FETCH múltiple para evitar N viajes IMAP individuales."""
         from email.utils import parsedate_to_datetime
         resultados = []
-        for mid in todos_ids:
-            status, data = mail.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])")
-            if status != "OK":
-                continue
-            header = data[0][1].decode("utf-8", errors="replace") if data[0][1] else ""
-            match_subj = re.search(r"Subject:\s*(.+)", header, re.IGNORECASE)
-            match_from = re.search(r"From:\s*(.+)", header, re.IGNORECASE)
-            if not match_subj:
-                continue
-            asunto = match_subj.group(1).strip()
-            remitente = match_from.group(1).strip() if match_from else ""
-            if solo_papeles:
-                if not asunto.lower().startswith("papeles"):
+        if not todos_ids:
+            return resultados
+        # Convertir IDs a string para fetch múltiple
+        ids_comma = b','.join(mid if isinstance(mid, bytes) else str(mid).encode() for mid in todos_ids)
+        status, data = mail.fetch(ids_comma, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])")
+        if status != "OK":
+            self._log(f"  ⚠ Error en fetch múltiple de headers, reintentando individual...")
+            # Fallback: fetch individual por si el servidor no soporta fetch múltiple
+            for mid in todos_ids:
+                status2, data2 = mail.fetch(mid, "(BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])")
+                if status2 != "OK":
                     continue
-                if "correo" not in remitente.lower():
-                    continue
-            match_date = re.search(r"Date:\s*(.+)", header, re.IGNORECASE)
-            fecha_str = match_date.group(1).strip() if match_date else ""
-            try:
-                fecha_dt = parsedate_to_datetime(fecha_str)
-            except Exception:
-                fecha_dt = datetime.min
-            resultados.append((fecha_dt, fecha_str, mid, asunto))
+                header = data2[0][1].decode("utf-8", errors="replace") if data2[0][1] else ""
+                self._procesar_header(header, mid, solo_papeles, resultados, parsedate_to_datetime)
+            return resultados
+        for item in data:
+            if item is None or len(item) < 2:
+                continue
+            header_bytes = item[1]
+            if not header_bytes:
+                continue
+            header = header_bytes.decode("utf-8", errors="replace")
+            # Extraer MID del primer campo (ej: b'1 (BODY[HEADER...')
+            first_part = item[0]
+            if isinstance(first_part, bytes):
+                mid = first_part.split(b' ')[0]
+            else:
+                mid = first_part.split(' ')[0].encode()
+            self._procesar_header(header, mid, solo_papeles, resultados, parsedate_to_datetime)
         return resultados
+
+    def _procesar_header(self, header, mid, solo_papeles, resultados, parsedate_to_datetime):
+        """Extrae datos de un header IMAP y los agrega a resultados si cumple filtros."""
+        match_subj = re.search(r"Subject:\s*(.+)", header, re.IGNORECASE)
+        match_from = re.search(r"From:\s*(.+)", header, re.IGNORECASE)
+        if not match_subj:
+            return
+        asunto = match_subj.group(1).strip()
+        remitente = match_from.group(1).strip() if match_from else ""
+        if solo_papeles:
+            if not asunto.lower().startswith("papeles"):
+                return
+            if "correo" not in remitente.lower():
+                return
+        match_date = re.search(r"Date:\s*(.+)", header, re.IGNORECASE)
+        fecha_str = match_date.group(1).strip() if match_date else ""
+        try:
+            fecha_dt = parsedate_to_datetime(fecha_str)
+        except Exception:
+            fecha_dt = datetime.min
+        resultados.append((fecha_dt, fecha_str, mid, asunto))
 
     def _mail_worker(self):
         """Modo 0: Descarga automática de los N mails más nuevos que cumplen las reglas."""
@@ -2382,11 +2410,17 @@ class App(ctk.CTk):
                 self._log("Error en búsqueda IMAP")
                 return
             todos_ids = ids[0].split()
-            scope = max(cantidad, 20) if modo == 1 else cantidad
-            todos_ids = todos_ids[-scope:]
-            solo_papeles = (modo == 1)
-            label_modo = "'papeles'" if solo_papeles else "sin filtro"
-            self._log(f"Buscando entre los últimos {scope} mails ({label_modo})...")
+            if modo == 1:
+                # Buscar entre los últimos 300 mails para encontrar los N con 'papeles'
+                VENTANA = min(100, len(todos_ids))
+                todos_ids = todos_ids[-VENTANA:]
+                solo_papeles = True
+                label = f"hasta {cantidad} con 'papeles'"
+            else:
+                todos_ids = todos_ids[-cantidad:]
+                solo_papeles = False
+                label = f"últimos {cantidad} sin filtro"
+            self._log(f"Buscando {label} ({len(todos_ids)} resultados)...")
             mails_encontrados = self._mail_buscar_headers(mail, todos_ids, solo_papeles=solo_papeles)
             mails_encontrados.sort(key=lambda x: x[0], reverse=True)
             seleccionados = mails_encontrados[:cantidad]
@@ -3669,9 +3703,115 @@ class App(ctk.CTk):
         self.btn_ejecutar_planillas.configure(state="normal")
 
     # ═══════════════════════════════════════════════════════════════════
+    # POPUP: SELECCIONAR PLANILLAS A COMPLETAR
+    # ═══════════════════════════════════════════════════════════════════
+    def _popup_completar_planillas(self):
+        """Popup para elegir qué planillas completar (SOBRES, COBRO, PC)."""
+        if self.tarea_activa:
+            messagebox.showwarning(
+                "Agente ocupado",
+                "Hay una tarea en ejecución. Espere a que finalice."
+            )
+            return
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("Completar Planillas")
+        popup.geometry("360x300")
+        popup.configure(fg_color=Palette.BG_CARD)
+        popup.transient(self)
+        popup.lift()
+        popup.resizable(False, False)
+
+        popup.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width() - 360) // 2
+        py = self.winfo_y() + (self.winfo_height() - 300) // 2
+        popup.geometry(f"360x300+{px}+{py}")
+
+        ctk.CTkLabel(
+            popup, text="Seleccionar Planillas",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+            text_color=Palette.ACCENT,
+        ).pack(pady=(20, 16))
+
+        var_sobres = ctk.BooleanVar(value=True)
+        var_cobro  = ctk.BooleanVar(value=True)
+        var_pc     = ctk.BooleanVar(value=True)
+        vars_tipos = {"sobres": var_sobres, "cobro": var_cobro, "pc": var_pc}
+
+        def _actualizar_boton():
+            alguna = any(v.get() for v in vars_tipos.values())
+            btn_completar.configure(
+                state="normal" if alguna else "disabled",
+                fg_color=Palette.ACCENT if alguna else Palette.ACCENT_DIM,
+            )
+
+        def _seleccionar_todo():
+            for v in vars_tipos.values():
+                v.set(True)
+            _actualizar_boton()
+
+        def _ninguno():
+            for v in vars_tipos.values():
+                v.set(False)
+            _actualizar_boton()
+
+        # ── Checkboxes ────────────────────────────────────────────
+        frame_cbs = ctk.CTkFrame(popup, fg_color="transparent")
+        frame_cbs.pack(pady=(0, 8))
+
+        for label, key in [("SOBRES", "sobres"), ("COBRO", "cobro"), ("PC (Precintos/Cables)", "pc")]:
+            cb = ctk.CTkCheckBox(
+                frame_cbs, text=label,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=13),
+                variable=vars_tipos[key], command=_actualizar_boton,
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
+                text_color=Palette.TEXT_PRIMARY,
+            )
+            cb.pack(anchor="w", pady=4, padx=20)
+
+        # ── Botones Seleccionar Todo / Ninguno ────────────────────
+        frame_sel = ctk.CTkFrame(popup, fg_color="transparent")
+        frame_sel.pack(pady=(4, 12))
+
+        ctk.CTkButton(
+            frame_sel, text="✓ Seleccionar Todo",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
+            text_color=Palette.WHITE, corner_radius=6, height=32, width=150,
+            command=_seleccionar_todo,
+        ).pack(side="left", padx=6)
+
+        ctk.CTkButton(
+            frame_sel, text="✗ Ninguno",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6, height=32, width=110,
+            command=_ninguno,
+        ).pack(side="left", padx=6)
+
+        # ── Botón Completar ───────────────────────────────────────
+        btn_completar = ctk.CTkButton(
+            popup, text="▶  Completar",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.WHITE, corner_radius=6, height=38,
+            command=lambda: self._confirmar_completar(popup, vars_tipos),
+        )
+        btn_completar.pack(fill="x", padx=30, pady=(6, 16))
+
+    def _confirmar_completar(self, popup, vars_tipos):
+        """Cierra el popup y lanza la ejecución con los tipos seleccionados."""
+        tipos = [nombre for nombre, var in vars_tipos.items() if var.get()]
+        if not tipos:
+            return
+        popup.destroy()
+        self._ejecutar_agente_planillas(tipos)
+
+    # ═══════════════════════════════════════════════════════════════════
     # AGENTE 2: EJECUCIÓN EN HILO
     # ═══════════════════════════════════════════════════════════════════
-    def _ejecutar_agente_planillas(self):
+    def _ejecutar_agente_planillas(self, tipos=None):
         if self.tarea_activa:
             messagebox.showwarning(
                 "Agente ocupado",
@@ -3679,6 +3819,7 @@ class App(ctk.CTk):
             )
             return
         self.tarea_activa = True
+        self._tipos_planillas = tipos
         self._cancelar_tarea.clear()
         self.btn_ejecutar_planillas.configure(
             text="⏳  Analizando...", state="disabled",
@@ -3697,19 +3838,24 @@ class App(ctk.CTk):
             self.tree_planillas.delete(row)
         self.lbl_resumen_planillas.configure(text="Sin datos analizados")
 
+        # Mostrar en log qué planillas se van a completar
+        nombres = {"sobres": "SOBRES", "cobro": "COBRO", "pc": "PC"}
+        seleccionadas = [nombres[t] for t in (tipos or ["sobres", "cobro", "pc"])]
+        self.log_queue.put(f"[...] Planillas seleccionadas: {', '.join(seleccionadas)}")
+
         t = threading.Thread(target=self._agente_planillas_worker, daemon=True)
         t.start()
 
     def _agente_planillas_worker(self):
         """Ejecuta el agente de planillas en hilo de fondo."""
         try:
-            self._planillas_core()
+            self._planillas_core(self._tipos_planillas)
         except Exception as e:
             self.after(0, lambda: self._planillas_error(str(e)))
         finally:
             self.after(0, self._planillas_done)
 
-    def _planillas_core(self):
+    def _planillas_core(self, tipos=None):
         """Lógica real del agente de planillas (modificada para GUI)."""
         escritorio = self._resolver_ruta("planillas_carga", "Desktop")
         self._log(f"Escaneando: {escritorio}")
@@ -3855,7 +4001,7 @@ class App(ctk.CTk):
                     self._log(f"  ERROR procesando {archivo}: {err}")
 
         # Guardar en SOBRES
-        if datos_extraidos and ws_sobres is not None:
+        if datos_extraidos and ws_sobres is not None and (not tipos or "sobres" in tipos):
             self._log("Escribiendo datos en SOBRES_2026.xlsx...")
             try:
 
@@ -4057,13 +4203,13 @@ class App(ctk.CTk):
         # ═══════════════════════════════════════════════════════════════
         # COMPLETAR PLANILLA DE COBRO
         # ═══════════════════════════════════════════════════════════════
-        if datos_extraidos:
+        if datos_extraidos and (not tipos or "cobro" in tipos):
             resultados["cobro"] = self._completar_cobro(datos_extraidos)
 
         # ═══════════════════════════════════════════════════════════════
         # COMPLETAR PLANILLA PC (PRECINTOS/CABLES)
         # ═══════════════════════════════════════════════════════════════
-        if datos_extraidos:
+        if datos_extraidos and (not tipos or "pc" in tipos):
             resultados["pc"] = self._completar_pc(datos_extraidos)
 
         # Guardar resultados para el popup (se muestra en el hilo principal)
