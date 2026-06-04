@@ -3106,78 +3106,9 @@ class App(ctk.CTk):
                     self.log_queue.put(f"[...]   ⚠ Error guarda en {archivo}: {ultimo_error}")
                     continue
                 try:
-                    if es_xls:
-                        # Formato .xls: usar xlrd + xlutils
-                        import xlrd as xlrd_local
-                        from xlutils.copy import copy as xl_copy
-                        rb = xlrd_local.open_workbook(ruta, formatting_info=True)
-                        chofer_idx = None
-                        for i, sname in enumerate(rb.sheet_names()):
-                            if "CHOFER" in sname.upper():
-                                chofer_idx = i; break
-                        if chofer_idx is None:
-                            self.log_queue.put(f"[...]   ⚠ Hoja 'Choferes' no hallada en {archivo[:50]}")
-                            rb.release_resources(); continue
-                        rs = rb.sheet_by_index(chofer_idx)
-                        wb_w = xl_copy(rb)
-                        ws_w = wb_w.get_sheet(chofer_idx)
-                        escrito = False
-                        valores_col_g = []
-                        for row in range(1, 16):
-                            val = rs.cell_value(row, 6) if row < rs.nrows else ""
-                            if val:
-                                valores_col_g.append(f"  fila {row}: '{str(val)[:60]}'")
-                                if isinstance(val, str) and "GUARDA" in val.strip().upper():
-                                    ws_w.write(row, 7, self._super_guarda)
-                                    self.log_queue.put(f"[...]   🛡 Guarda '{self._super_guarda}' → {archivo[:50]} fila {row+1}")
-                                    escrito = True; break
-                        if not escrito:
-                            self.log_queue.put(f"[...]   ⚠ 'Guarda' no hallada en col G de {archivo[:50]}")
-                            self.log_queue.put(f"[...]     Hojas: {rb.sheet_names()}")
-                            self.log_queue.put(f"[...]     Hoja '{rs.name}' col G (filas 1-15):")
-                            if valores_col_g:
-                                for v in valores_col_g:
-                                    self.log_queue.put(f"[...]     {v}")
-                            else:
-                                self.log_queue.put(f"[...]     (todas vacías)")
-                        wb_w.save(ruta)
-                        rb.release_resources()
-                        aplicados += 1
+                    if not self._escribir_guarda_en_archivo(ruta, self._super_guarda, self.log_queue.put):
+                        self.log_queue.put(f"[...]   ⚠ 'Guarda' no hallada en {archivo[:50]}")
                     else:
-                        # .xlsx: openpyxl
-                        wb = self._abrir_excel_seguro(ruta)
-                        ws_chofer = None
-                        for s in wb.sheetnames:
-                            if "CHOFER" in s.upper():
-                                ws_chofer = wb[s]; break
-                        if not ws_chofer:
-                            self.log_queue.put(f"[...]   ⚠ Hoja 'Choferes' no hallada en {archivo[:50]}")
-                            wb.close(); continue
-                        escrito = False
-                        valores_col_g = []
-                        for row in range(1, 16):
-                            cell = ws_chofer.cell(row=row, column=7)
-                            val = cell.value
-                            if val is None:
-                                for mr in ws_chofer.merged_cells.ranges:
-                                    if (mr.min_col <= 7 <= mr.max_col and mr.min_row <= row <= mr.max_row):
-                                        val = ws_chofer.cell(row=mr.min_row, column=mr.min_col).value; break
-                            if val is not None and val != "":
-                                valores_col_g.append(f"  fila {row}: '{str(val)[:60]}'")
-                                if "GUARDA" in str(val).strip().upper():
-                                    ws_chofer.cell(row=row, column=8).value = self._super_guarda
-                                    self.log_queue.put(f"[...]   🛡 Guarda '{self._super_guarda}' → {archivo[:50]} fila {row}")
-                                    escrito = True; break
-                        if not escrito:
-                            self.log_queue.put(f"[...]   ⚠ 'Guarda' no hallada en col G de {archivo[:50]}")
-                            self.log_queue.put(f"[...]     Hojas: {wb.sheetnames}")
-                            self.log_queue.put(f"[...]     Hoja '{ws_chofer.title}' col G (filas 1-15):")
-                            if valores_col_g:
-                                for v in valores_col_g:
-                                    self.log_queue.put(f"[...]     {v}")
-                            else:
-                                self.log_queue.put(f"[...]     (todas vacías)")
-                        self._guardar_excel_seguro(wb, ruta)
                         aplicados += 1
                 except Exception as e:
                     self.log_queue.put(f"[...]   ⚠ Error guarda en {archivo}: {e}")
@@ -3185,6 +3116,78 @@ class App(ctk.CTk):
                     self.log_queue.put(f"[...]     {traceback.format_exc()}")
         self.log_queue.put(f"[...] ✓ Guarda '{self._super_guarda}': {aplicados} planillas actualizadas")
         return aplicados
+
+    def _escribir_guarda_en_archivo(
+        self, ruta: str, guarda_nombre: str, log_func=None
+    ) -> bool:
+        """Write guarda_nombre to column H in the CHOFER sheet of an Excel file.
+
+        Handles both .xls (Excel COM via win32com) and .xlsx (openpyxl) formats.
+        Returns True if written, False if no 'GUARDA' found or no CHOFER sheet.
+        """
+        es_xls = ruta.lower().endswith(".xls") and not ruta.lower().endswith(".xlsx")
+        escrito = False
+
+        if es_xls:
+            import pythoncom
+            import win32com.client
+            pythoncom.CoInitialize()
+            try:
+                excel = win32com.client.Dispatch("Excel.Application")
+                excel.Visible = False
+                excel.DisplayAlerts = False
+                try:
+                    wb = excel.Workbooks.Open(ruta)
+                    ws_chofer = None
+                    for s in wb.Sheets:
+                        if "CHOFER" in s.Name.upper():
+                            ws_chofer = s
+                            break
+                    if not ws_chofer:
+                        if log_func:
+                            log_func("[...]   Hoja 'Choferes' no hallada")
+                        return False
+                    for row in range(2, 16):
+                        val = ws_chofer.Cells(row, 7).Value  # col 7 = G
+                        if val is not None and "GUARDA" in str(val).strip().upper():
+                            ws_chofer.Cells(row, 8).Value = guarda_nombre  # col 8 = H
+                            escrito = True
+                            break
+                    wb.Save()
+                    wb.Close()
+                finally:
+                    excel.Quit()
+            finally:
+                pythoncom.CoUninitialize()
+        else:
+            wb = self._abrir_excel_seguro(ruta)
+            try:
+                ws_chofer = None
+                for s in wb.sheetnames:
+                    if "CHOFER" in s.upper():
+                        ws_chofer = wb[s]
+                        break
+                if not ws_chofer:
+                    if log_func:
+                        log_func("[...]   Hoja 'Choferes' no hallada")
+                    return False
+                for row in range(2, 16):
+                    cell = ws_chofer.cell(row=row, column=7)  # col 7 = G (1-indexed)
+                    val = cell.value
+                    if val is None:
+                        for mr in ws_chofer.merged_cells.ranges:
+                            if (mr.min_col <= 7 <= mr.max_col and mr.min_row <= row <= mr.max_row):
+                                val = ws_chofer.cell(row=mr.min_row, column=mr.min_col).value
+                                break
+                    if val is not None and "GUARDA" in str(val).strip().upper():
+                        ws_chofer.cell(row=row, column=8).value = guarda_nombre  # col 8 = H
+                        escrito = True
+                        break
+                self._guardar_excel_seguro(wb, ruta)
+            finally:
+                wb.close()
+
+        return escrito
 
     def _super_completar_planillas(self):
         """Ejecuta Completar Planillas con los datos extraídos."""
@@ -3244,15 +3247,6 @@ class App(ctk.CTk):
         )
         toolbar.pack(fill="x", pady=(0, 6))
         toolbar.pack_propagate(False)
-
-        self.btn_backup_drive = ctk.CTkButton(
-            toolbar,
-            text="📀  Backup",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            fg_color=Palette.BG_HOVER, text_color=Palette.TEXT_MUTED,
-            corner_radius=6, height=34, width=160, state="disabled",
-        )
-        self.btn_backup_drive.pack(side="left", padx=4, pady=4)
 
         self.btn_backup_pendrive = ctk.CTkButton(
             toolbar,
@@ -3342,7 +3336,6 @@ class App(ctk.CTk):
         self.tarea_activa = True
         self._cancelar_tarea.clear()
         self.btn_backup_pendrive.configure(text="⏳  Moviendo...", state="disabled")
-        self.btn_backup_drive.configure(state="disabled")
         self.progress_backup.configure(mode="indeterminate")
         self.progress_backup.start()
         self.lbl_estado_backup.configure(text="Detectando pendrive...", text_color=Palette.INFO)
@@ -3430,169 +3423,8 @@ class App(ctk.CTk):
         finally:
             self.after(0, self._backup_done)
 
-    # ── Backup ─────────────────────────────────────────────────
-    def _backup_drive_iniciar(self):
-        if self.tarea_activa:
-            messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
-            return
-        if not self._cfg_obtener("google_drive", "client_id", ""):
-            messagebox.showwarning("Drive no configurado",
-                "Configure las credenciales de Google Drive en Ajustes > Drive primero.")
-            return
-        self.tarea_activa = True
-        self._cancelar_tarea.clear()
-        self.btn_backup_drive.configure(text="⏳  Subiendo...", state="disabled")
-        self.btn_backup_pendrive.configure(state="disabled")
-        self.progress_backup.configure(mode="indeterminate")
-        self.progress_backup.start()
-        self.lbl_estado_backup.configure(text="Conectando a Google Drive...", text_color=Palette.INFO)
-        self._limpiar_log()
-        self._log("📀 Iniciando Backup...")
-        t = threading.Thread(target=self._backup_drive_worker, daemon=True)
-        t.start()
-
-    def _drive_autenticar(self):
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from google.auth.transport.requests import Request
-        from google.auth.credentials import Credentials
-        from googleapiclient.discovery import build
-
-        client_id = self._cfg_obtener("google_drive", "client_id", "")
-        client_secret = self._cfg_obtener("google_drive", "client_secret", "")
-        token_info = self._cfg_obtener("google_drive", "token", None)
-
-        creds = None
-        if token_info:
-            try:
-                creds = Credentials.from_authorized_user_info(token_info, ["https://www.googleapis.com/auth/drive.file"])
-            except Exception:
-                pass
-
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                self.log_queue.put("[...] 🔄 Renovando token OAuth...")
-                creds.refresh(Request())
-            else:
-                self.log_queue.put("[...] 🔐 Abriendo navegador para autenticación...")
-                flow = InstalledAppFlow.from_client_config(
-                    {"installed": {
-                        "client_id": client_id, "client_secret": client_secret,
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token"
-                    }},
-                    ["https://www.googleapis.com/auth/drive.file"])
-                creds = flow.run_local_server(port=0)
-
-            token_data = {
-                "refresh_token": creds.refresh_token,
-                "token": creds.token,
-                "client_id": creds.client_id,
-                "client_secret": creds.client_secret,
-            }
-            self.config.setdefault("google_drive", {})["token"] = token_data
-            self._guardar_config()
-
-        return build("drive", "v3", credentials=creds)
-
-    def _drive_buscar_o_crear_carpeta(self, service, nombre, parent_id):
-        query = f"name='{nombre}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        results = service.files().list(q=query, fields="files(id)").execute()
-        if results.get("files"):
-            fid = results["files"][0]["id"]
-            self.log_queue.put(f"[...]   📁 {nombre} (existente)")
-            return fid
-        metadata = {"name": nombre, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
-        fid = service.files().create(body=metadata, fields="id").execute()["id"]
-        self.log_queue.put(f"[...]   + Creando carpeta: {nombre}")
-        return fid
-
-    def _drive_subir_sobrescrito(self, service, ruta_local, nombre, folder_id):
-        from googleapiclient.http import MediaFileUpload
-        query = f"name='{nombre}' and '{folder_id}' in parents and trashed=false"
-        results = service.files().list(q=query, fields="files(id)").execute()
-        media = MediaFileUpload(ruta_local, resumable=True)
-        if results.get("files"):
-            service.files().update(fileId=results["files"][0]["id"], media_body=media).execute()
-            self.log_queue.put(f"[...]   ↑ {nombre} (sobreescrito)")
-        else:
-            metadata = {"name": nombre, "parents": [folder_id]}
-            service.files().create(body=metadata, media_body=media).execute()
-            self.log_queue.put(f"[...]   ↑ {nombre} (subido)")
-
-    def _backup_drive_worker(self):
-        try:
-            service = self._drive_autenticar()
-            folder_id_raiz = self._cfg_obtener("google_drive", "folder_id", "")
-            if not folder_id_raiz:
-                self.log_queue.put("[...] ⚠ Falta Folder ID en Ajustes > Drive")
-                self.after(0, self._backup_done)
-                return
-
-            self.log_queue.put("[...] ✓ Conectado a Google Drive")
-
-            año = str(datetime.now().year)
-            mes = datetime.now().month
-            meses_es = {1:"Enero",2:"Febrero",3:"Marzo",4:"Abril",5:"Mayo",6:"Junio",
-                        7:"Julio",8:"Agosto",9:"Septiembre",10:"Octubre",11:"Noviembre",12:"Diciembre"}
-            mes_str = f"{mes:02d}_{meses_es[mes]}"
-
-            # Buscar/crear estructura de carpetas
-            id_cargas     = self._drive_buscar_o_crear_carpeta(service, "CARGAS", folder_id_raiz)
-            id_cargas_año = self._drive_buscar_o_crear_carpeta(service, f"Cargas_{año}", id_cargas)
-            id_mes        = self._drive_buscar_o_crear_carpeta(service, mes_str, id_cargas_año)
-
-            # Subir CARGA TERRESTRE.xlsx
-            ruta_ct = buscar_archivo_en_pendrive(
-                "CARGA TERRESTRE.xlsx",
-                self._cfg_obtener_rutas("carga_terrestre_carpeta", os.path.join("TRABAJO", "01_PLANILLAS")))
-            if not ruta_ct:
-                ruta_ct = buscar_archivo_en_pendrive(
-                    "CARGA TERRESTRE.xls",
-                    self._cfg_obtener_rutas("carga_terrestre_carpeta", os.path.join("TRABAJO", "01_PLANILLAS")))
-            if ruta_ct:
-                self._drive_subir_sobrescrito(service, ruta_ct, "CARGA TERRESTRE.xlsx", id_cargas)
-
-            # Escanear y subir carpetas del escritorio
-            escritorio = self._resolver_ruta("planillas_carga", "Desktop")
-            carpetas = []
-            for item in sorted(os.listdir(escritorio)):
-                ruta_carp = os.path.join(escritorio, item)
-                if not os.path.isdir(ruta_carp):
-                    continue
-                if item.startswith("."):
-                    continue
-                for archivo in os.listdir(ruta_carp):
-                    up = archivo.upper()
-                    if "CONTENEDORES" in up or (up.startswith("PLANILLA DE CARGA") and (up.endswith(".XLSX") or up.endswith(".XLS"))):
-                        carpetas.append(ruta_carp)
-                        break
-
-            self.after(0, lambda: self.progress_backup.configure(mode="determinate"))
-            self.after(0, lambda: self.progress_backup.set(0))
-            total = len(carpetas)
-            for i, carpeta in enumerate(carpetas):
-                if self._cancelar_tarea.is_set():
-                    self.log_queue.put("[...] ⚠ Tarea cancelada.")
-                    break
-                nombre = os.path.basename(carpeta)
-                id_sub = self._drive_buscar_o_crear_carpeta(service, nombre, id_mes)
-                for archivo in os.listdir(carpeta):
-                    if self._cancelar_tarea.is_set():
-                        break
-                    ruta_archivo = os.path.join(carpeta, archivo)
-                    if os.path.isfile(ruta_archivo):
-                        self._drive_subir_sobrescrito(service, ruta_archivo, archivo, id_sub)
-                self.after(0, lambda p=i+1, t=total: self.progress_backup.set(p/t if t else 1))
-
-            self.log_queue.put(f"[...] ✓ Backup: {len(carpetas)} carpetas subidas a Google Drive")
-        except Exception as e:
-            self.log_queue.put(f"[...] ⚠ Error: {e}")
-        finally:
-            self.after(0, self._backup_done)
-
     def _backup_done(self):
         self.tarea_activa = False
-        self.btn_backup_drive.configure(text="📀  Backup", state="disabled", fg_color=Palette.BG_HOVER)
         self.btn_backup_pendrive.configure(text="💿  Back Up", state="normal", fg_color=Palette.SECONDARY)
         self.progress_backup.stop()
         self.progress_backup.set(1)
@@ -3814,80 +3646,12 @@ class App(ctk.CTk):
 
                 archivo_nombre = os.path.basename(ruta_contenedores)
                 self.log_queue.put(f"[...]     📄 {archivo_nombre}")
-                es_xls = ruta_contenedores.lower().endswith(".xls") and not ruta_contenedores.lower().endswith(".xlsx")
 
                 try:
-                    if es_xls:
-                        # Formato .xls antiguo: usar xlrd + xlutils
-                        import xlrd
-                        from xlutils.copy import copy as xl_copy
-                        rb = xlrd.open_workbook(ruta_contenedores, formatting_info=True)
-                        chofer_idx = None
-                        for i, sname in enumerate(rb.sheet_names()):
-                            if "CHOFER" in sname.upper():
-                                chofer_idx = i
-                                break
-                        if chofer_idx is None:
-                            self.log_queue.put(f"[...]     ⚠ Hoja 'Choferes' no hallada")
-                            rb.release_resources()
-                            continue
-
-                        rs = rb.sheet_by_index(chofer_idx)
-                        wb_w = xl_copy(rb)
-                        ws_w = wb_w.get_sheet(chofer_idx)
-
-                        escrito = False
-                        for row in range(1, 16):
-                            val = rs.cell_value(row, 6) if row < rs.nrows else ""  # col 6 = G
-                            if val and isinstance(val, str) and "GUARDA" in val.strip().upper():
-                                ws_w.write(row, 7, guarda_elegido)  # col 7 = H
-                                escrito = True
-                                self.log_queue.put(f"[...]     ✓ '{guarda_elegido}' → fila {row+1}, col H")
-                                break
-                        if not escrito:
-                            self.log_queue.put(f"[...]     ⚠ 'Guarda' no hallada en col G")
-
-                        self.log_queue.put(f"[...]     💾 Guardando...")
-                        wb_w.save(ruta_contenedores)
-                        rb.release_resources()
-                        self.log_queue.put(f"[...]     ✅ Listo")
+                    if not self._escribir_guarda_en_archivo(ruta_contenedores, guarda_elegido, self.log_queue.put):
+                        self.log_queue.put(f"[...]     ⚠ 'Guarda' no hallada en col G")
                     else:
-                        # Formato .xlsx: usar openpyxl
-                        wb = self._abrir_excel_seguro(ruta_contenedores)
-                        ws_chofer = None
-                        for s in wb.sheetnames:
-                            if "CHOFER" in s.upper():
-                                ws_chofer = wb[s]
-                                break
-                        if not ws_chofer:
-                            self.log_queue.put(f"[...]     ⚠ Hoja 'Choferes' no hallada")
-                            wb.close()
-                            continue
-
-                        escrito = False
-                        for row in range(1, 16):
-                            cell = ws_chofer.cell(row=row, column=7)
-                            val = cell.value
-                            if val is None:
-                                for mr in ws_chofer.merged_cells.ranges:
-                                    if (mr.min_col <= 7 <= mr.max_col
-                                            and mr.min_row <= row <= mr.max_row):
-                                        val = ws_chofer.cell(row=mr.min_row, column=mr.min_col).value
-                                        break
-                            if val is not None and val != "":
-                                val_str = str(val).strip().upper()
-                                if val_str == "GUARDA" or val_str.startswith("GUARDA"):
-                                    ws_chofer.cell(row=row, column=8).value = guarda_elegido
-                                    escrito = True
-                                    self.log_queue.put(f"[...]     ✓ '{guarda_elegido}' → fila {row}, col H")
-                                    break
-
-                        if not escrito:
-                            self.log_queue.put(f"[...]     ⚠ 'Guarda' no hallada en col G")
-
-                        self.log_queue.put(f"[...]     💾 Guardando...")
-                        self._guardar_excel_seguro(wb, ruta_contenedores)
-                        self.log_queue.put(f"[...]     ✅ Listo")
+                        self.log_queue.put(f"[...]     ✓ '{guarda_elegido}' escrito correctamente")
                 except Exception as e:
                     self.log_queue.put(f"[...]     ⚠ Error: {e}")
 
@@ -4074,7 +3838,7 @@ class App(ctk.CTk):
                         "dest_celda": dest_celda,
                         "bl_final": bl_final,
                         "frac_carpeta": frac_carpeta,
-                        "servicio": cant_final * 60000,
+                        "servicio": cant_final * int(self._cfg_obtener("valores", "ata_tares", 65000)),
                         "precintos": precintos,
                         "guarda": guarda if guarda else "No detectado",
                         "source_folder": item,
@@ -4217,7 +3981,7 @@ class App(ctk.CTk):
                     valores_check_1 = {
                         1: f_celda, 2: d1["cant_final"], 3: "TERRES", 4: d1["pe_recortado"],
                         5: d1["carp_celda"], 6: "CHILE", 7: d1["trans_final"], 8: dest_abrev,
-                        9: d1["bl_final"], 10: d1["frac_carpeta"], 11: d1["cant_final"] * 60000,
+                        9: d1["bl_final"], 10: d1["frac_carpeta"], 11: d1["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000)),
                     }
                     if ya_existe_en_hoja(ws_sobres, valores_check_1, excluir_columnas={9}):
                         self._log(f"  Omitido (ya existe): Carpeta {d1.get('carp_celda','?')} | P.E. {d1.get('pe_recortado','?')} | {f_celda}")
@@ -4421,7 +4185,7 @@ class App(ctk.CTk):
 
                 precio_base = int(self._cfg_obtener("valores", "precio_carpeta", 49000))
                 precio_carpeta = precio_base if es_primero_del_dia else precio_base // 2
-                servicio_ata = d1["cant_final"] * 60000
+                servicio_ata = d1["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000))
 
                 valores_fila = {
                     1: f_celda, 2: d1["cant_final"], 3: "TERRES", 4: d1["pe_recortado"],
@@ -4444,7 +4208,7 @@ class App(ctk.CTk):
                 if es_par:
                     # Segunda fila con datos del otro Contenedores
                     precio_carpeta_2 = precio_base // 2
-                    servicio_ata_2 = d2["cant_final"] * 60000
+                    servicio_ata_2 = d2["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000))
                     r2 = r1 + 1
 
                     vals2 = {1: f_celda, 2: d2["cant_final"], 3: "TERRES", 4: d2["pe_recortado"],
@@ -5399,7 +5163,6 @@ class App(ctk.CTk):
             planillas_ordenadas = sorted(todas_las_planillas, key=lambda p: os.path.basename(p).upper())
 
             cuerpo = "Estimados,\n\nSe adjuntan las planillas de carga correspondientes:\n\n"
-            cuerpo += "PLANILLA DE CARGA:\n"
             for p in planillas_ordenadas:
                 nombre_sin_ext = os.path.splitext(os.path.basename(p))[0]
                 cuerpo += f"  • {nombre_sin_ext}\n"
@@ -5509,8 +5272,8 @@ class App(ctk.CTk):
         popup = ctk.CTkToplevel(self)
         popup.title("Correos Despachados")
         n = len(items_tree)
-        h = min(180 + n * 36, 480)
-        popup.geometry(f"520x{h}")
+        h = min(220 + n * 40, 640)
+        popup.geometry(f"530x{h}")
         popup.configure(fg_color=Palette.BG_CARD)
         popup.transient(self)
         popup.lift()
@@ -5995,7 +5758,6 @@ class App(ctk.CTk):
             ("documentos", "📄  Documentos"),
             ("rutas", "📁  Rutas"),
             ("valores", "💰  Valores"),
-            ("drive", "💾  Drive"),
             ("seguridad", "🔒  Seguridad"),
         ]
 
@@ -6038,7 +5800,6 @@ class App(ctk.CTk):
         self._ajustes_tab_documentos(self._ajustes_frames["documentos"])
         self._ajustes_tab_rutas(self._ajustes_frames["rutas"])
         self._ajustes_tab_valores(self._ajustes_frames["valores"])
-        self._ajustes_tab_drive(self._ajustes_frames["drive"])
         self._ajustes_tab_seguridad(self._ajustes_frames["seguridad"])
 
         self._ajustes_frames["correo"].pack(fill="both", expand=True)
@@ -6303,6 +6064,12 @@ class App(ctk.CTk):
             extra="Primer ítem de cada fecha. Los siguientes llevan la mitad.",
             width=120,
         )
+        self._ent_ata_tares = self._ajustes_row(
+            parent, "ATA y TARES ($):",
+            str(self._cfg_obtener("valores", "ata_tares", 65000)),
+            extra="Valor del servicio ATA por contenedor.",
+            width=120,
+        )
 
         self._ajustes_seccion(parent, "Guardas Disponibles")
         ctk.CTkLabel(
@@ -6343,108 +6110,6 @@ class App(ctk.CTk):
                             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
                             text_color=Palette.TEXT_PRIMARY,
                             border_color=Palette.BORDER).pack(anchor="w", padx=20, pady=3)
-
-    # ── TAB: GOOGLE DRIVE ────────────────────────────────────────────
-    def _ajustes_tab_drive(self, parent):
-        self._ajustes_seccion(parent, "Backup en Google Drive")
-        ctk.CTkLabel(
-            parent,
-            text="1. Ir a console.cloud.google.com → APIs y Servicios → Biblioteca\n"
-                 "   Buscar 'Google Drive API' → Habilitar\n"
-                 "2. Credenciales → Crear credenciales → ID de cliente OAuth\n"
-                 "   Tipo: 'Aplicación de escritorio' → Crear\n"
-                 "3. Copiar Client ID y Client Secret acá abajo\n"
-                 "4. El Folder ID lo sacás de la URL de Drive:\n"
-                 "   drive.google.com/drive/folders/XXXXXX ← eso es el ID",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
-            text_color=Palette.TEXT_MUTED, justify="left",
-        ).pack(anchor="w", padx=14, pady=(0, 8))
-
-        self._ent_drive_client_id = self._ajustes_row(
-            parent, "Client ID:", self._cfg_obtener("google_drive", "client_id", ""), width=400)
-        self._ent_drive_client_secret = self._ajustes_row(
-            parent, "Client Secret:", self._cfg_obtener("google_drive", "client_secret", ""), show="*", width=400)
-        self._ent_drive_folder_id = self._ajustes_row(
-            parent, "Folder ID (trabajo_2024):", self._cfg_obtener("google_drive", "folder_id", ""), width=400)
-
-        # Botón para verificar conexión
-        verify_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        verify_frame.pack(fill="x", padx=14, pady=(8, 4))
-        self._drive_verify_btn = ctk.CTkButton(
-            verify_frame, text="🔗  Verificar Conexión Drive",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
-            text_color=Palette.WHITE, corner_radius=6, height=32, width=220,
-            command=self._drive_verificar_conexion,
-        )
-        self._drive_verify_btn.pack(side="left")
-        self._drive_verify_lbl = ctk.CTkLabel(
-            verify_frame, text="",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_SECONDARY,
-        )
-        self._drive_verify_lbl.pack(side="left", padx=10)
-
-    def _drive_verificar_conexion(self):
-        """Prueba la autenticación OAuth con Google Drive en un hilo de fondo."""
-        client_id = self._ent_drive_client_id.get().strip()
-        client_secret = self._ent_drive_client_secret.get().strip()
-        if not client_id or not client_secret:
-            self._drive_verify_lbl.configure(text="✗ Completá Client ID y Client Secret", text_color=Palette.ERROR)
-            return
-        self._drive_verify_btn.configure(text="⏳  Verificando...", state="disabled")
-        self._drive_verify_lbl.configure(text="Conectando...", text_color=Palette.INFO)
-
-        def _verificar():
-            try:
-                from google_auth_oauthlib.flow import InstalledAppFlow
-                from google.auth.transport.requests import Request
-                from google.auth.credentials import Credentials
-                from googleapiclient.discovery import build
-                import json
-
-                token_info = self._cfg_obtener("google_drive", "token", None)
-                creds = None
-                if token_info:
-                    try:
-                        creds = Credentials.from_authorized_user_info(token_info, ["https://www.googleapis.com/auth/drive.file"])
-                    except Exception:
-                        pass
-
-                if not creds or not creds.valid:
-                    if creds and creds.expired and creds.refresh_token:
-                        creds.refresh(Request())
-                    else:
-                        flow = InstalledAppFlow.from_client_config(
-                            {"installed": {"client_id": client_id, "client_secret": client_secret,
-                                           "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                                           "token_uri": "https://oauth2.googleapis.com/token"}},
-                            ["https://www.googleapis.com/auth/drive.file"])
-                        creds = flow.run_local_server(port=0)
-
-                    # Guardar token para futuro
-                    token_data = {
-                        "refresh_token": creds.refresh_token,
-                        "token": creds.token,
-                        "client_id": creds.client_id,
-                        "client_secret": creds.client_secret,
-                    }
-                    self.config.setdefault("google_drive", {})["token"] = token_data
-                    self._guardar_config()
-
-                service = build("drive", "v3", credentials=creds)
-                service.files().list(pageSize=1, fields="files(id)").execute()
-                self.after(0, lambda: self._drive_verify_lbl.configure(
-                    text="✓ Conexión exitosa", text_color=Palette.SUCCESS))
-            except Exception as e:
-                self.after(0, lambda: self._drive_verify_lbl.configure(
-                    text=f"✗ Error: {str(e)[:60]}", text_color=Palette.ERROR))
-            finally:
-                self.after(0, lambda: self._drive_verify_btn.configure(
-                    text="🔗  Verificar Conexión Drive", state="normal"))
-
-        t = threading.Thread(target=_verificar, daemon=True)
-        t.start()
 
     # ── TAB: SEGURIDAD ───────────────────────────────────────────────
     def _ajustes_tab_seguridad(self, parent):
@@ -6534,12 +6199,17 @@ class App(ctk.CTk):
                 precio_carpeta = int(self._ent_precio_carpeta.get().strip())
             except ValueError:
                 precio_carpeta = 49000
+            try:
+                ata_tares = int(self._ent_ata_tares.get().strip())
+            except ValueError:
+                ata_tares = 65000
             if hasattr(self, '_ajustes_texto_guardas'):
                 guardas = [l.strip() for l in self._ajustes_texto_guardas.get("1.0", "end-1c").split("\n") if l.strip()]
             else:
                 guardas = self._cfg_obtener("valores", "guardas", ["Gonzalez"])
             self.config["valores"] = {
                 "precio_carpeta": precio_carpeta,
+                "ata_tares": ata_tares,
                 "guardas": guardas if guardas else ["Gonzalez"],
             }
 
@@ -6554,16 +6224,6 @@ class App(ctk.CTk):
                     "completar_planillas": self._super_check_planillas.get(),
                 }
             }
-
-            # Google Drive (mantener token si ya existe)
-            token_existente = self._cfg_obtener("google_drive", "token", None)
-            self.config["google_drive"] = {
-                "client_id": self._ent_drive_client_id.get().strip(),
-                "client_secret": self._ent_drive_client_secret.get().strip(),
-                "folder_id": self._ent_drive_folder_id.get().strip(),
-            }
-            if token_existente:
-                self.config["google_drive"]["token"] = token_existente
 
             self.config["seguridad"] = {
                 "password": self._encrypt_val(pw1, os.environ["MULTIAGENTE_SECRET_KEY"]),
