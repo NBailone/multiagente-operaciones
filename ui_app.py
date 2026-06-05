@@ -1407,6 +1407,21 @@ class App(ctk.CTk):
             pass
         return ["Microsoft Print to PDF (simulación)"]
 
+    def _detectar_tipo_carpeta(self, nombre_carpeta: str) -> str:
+        """Return transport type from folder name: TERRESTRE, ISO, or FLEXI.
+
+        Parses the third segment (0-indexed, index 2) of the underscore-
+        separated folder name set during mail processing. Old-format
+        folders without enough segments default to TERRESTRE.
+        """
+        partes = nombre_carpeta.split("_")
+        if len(partes) < 3:
+            return "TERRESTRE"
+        tipo = partes[2]
+        if tipo not in ("TERRESTRE", "ISO", "FLEXI"):
+            return "TERRESTRE"    # unknown type → safe default
+        return tipo
+
     def _imp_ejecutar(self, seleccionadas):
         """Ejecuta la cola de impresión."""
         if self.tarea_activa:
@@ -1523,12 +1538,16 @@ class App(ctk.CTk):
 
                 # 4. Servicio ATA / Recibo ATA: imprimir SOLO las hojas exactas
                 if opciones.get("servicio_ata"):
-                    if hojas_ata:
-                        for archivo, hoja in hojas_ata:
-                            self._imp_enviar(os.path.join(ruta, archivo), impresora, f"Recibo ATA: {archivo} → {hoja}", hojas=[hoja])
-                            total_ok += 1
+                    tipo = self._detectar_tipo_carpeta(nombre)
+                    if tipo in ("ISO", "FLEXI"):
+                        self._log(f"  ⏭ Saltando Recibo ATA: carpeta marítima ({tipo})")
                     else:
-                        self._log(f"  ⚠ No se encontraron hojas Recibo Ata en el Excel")
+                        if hojas_ata:
+                            for archivo, hoja in hojas_ata:
+                                self._imp_enviar(os.path.join(ruta, archivo), impresora, f"Recibo ATA: {archivo} → {hoja}", hojas=[hoja])
+                                total_ok += 1
+                        else:
+                            self._log(f"  ⚠ No se encontraron hojas Recibo Ata en el Excel")
 
             self._log(f"COMPLETADO: Impresión finalizada — {total_ok} documentos enviados.")
         except Exception as e:
@@ -3149,32 +3168,36 @@ class App(ctk.CTk):
 
             # 4. Servicio ATA / Recibo ATA: hojas del Excel Contenedores
             if hacer_recibo and sobres:
-                nombres_ata = ["RECIBO ATA"] + [f"RECIBO ATA {i}" for i in range(2, 9)]
-                hojas_ata = []
-                for sobre in sobres:
-                    ruta_excel = os.path.join(ruta, sobre)
-                    try:
-                        if sobre.lower().endswith(".xlsx"):
-                            wb_tmp = self._abrir_excel_seguro(ruta_excel)
-                            for sn in wb_tmp.sheetnames:
-                                if sn.upper() in [n.upper() for n in nombres_ata]:
-                                    hojas_ata.append((sobre, sn))
-                            wb_tmp.close()
-                        else:
-                            book = xlrd.open_workbook(ruta_excel)
-                            for sn in book.sheet_names():
-                                if sn.upper() in [n.upper() for n in nombres_ata]:
-                                    hojas_ata.append((sobre, sn))
-                    except Exception:
-                        pass
-                if hojas_ata:
-                    for archivo, hoja in hojas_ata:
-                        self.log_queue.put(f"[...]   📄 Recibo ATA: {archivo} → {hoja}")
-                        ok = self._imp_enviar(os.path.join(ruta, archivo), impresora, f"  Recibo ATA ({archivo[:30]})", hojas=[hoja])
-                        if ok:
-                            total_ok += 1
+                tipo = self._detectar_tipo_carpeta(nombre)
+                if tipo in ("ISO", "FLEXI"):
+                    self.log_queue.put(f"[...]   ⏭ Saltando Recibo ATA: carpeta marítima ({tipo})")
                 else:
-                    self.log_queue.put(f"[...]   ⚠ Sin hoja Recibo ATA en Contenedores")
+                    nombres_ata = ["RECIBO ATA"] + [f"RECIBO ATA {i}" for i in range(2, 9)]
+                    hojas_ata = []
+                    for sobre in sobres:
+                        ruta_excel = os.path.join(ruta, sobre)
+                        try:
+                            if sobre.lower().endswith(".xlsx"):
+                                wb_tmp = self._abrir_excel_seguro(ruta_excel)
+                                for sn in wb_tmp.sheetnames:
+                                    if sn.upper() in [n.upper() for n in nombres_ata]:
+                                        hojas_ata.append((sobre, sn))
+                                wb_tmp.close()
+                            else:
+                                book = xlrd.open_workbook(ruta_excel)
+                                for sn in book.sheet_names():
+                                    if sn.upper() in [n.upper() for n in nombres_ata]:
+                                        hojas_ata.append((sobre, sn))
+                        except Exception:
+                            pass
+                    if hojas_ata:
+                        for archivo, hoja in hojas_ata:
+                            self.log_queue.put(f"[...]   📄 Recibo ATA: {archivo} → {hoja}")
+                            ok = self._imp_enviar(os.path.join(ruta, archivo), impresora, f"  Recibo ATA ({archivo[:30]})", hojas=[hoja])
+                            if ok:
+                                total_ok += 1
+                    else:
+                        self.log_queue.put(f"[...]   ⚠ Sin hoja Recibo ATA en Contenedores")
             else:
                 self.log_queue.put(f"[...]   ⚠ Sin Contenedores para Recibo ATA")
 
