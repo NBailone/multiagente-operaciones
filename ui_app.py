@@ -2620,6 +2620,35 @@ class App(ctk.CTk):
             self._log("⚡ Súper Auto: iniciando cadena automática...")
             self.after(500, lambda: self._super_ejecutar_cadena(resultados))
 
+    def _clasificar_tipo_transporte(self, puerto_salida, peso_flexi):
+        """Classify transport type from CONTENEDORES fields.
+
+        Returns "TERRESTRE" | "ISO" | "FLEXI".
+        - None / "" / "-" (after .strip()) on puerto_salida → TERRESTRE
+        - set + peso in {None, "", 0, 0.0, "0"}                → ISO
+        - set + peso > 0                                      → FLEXI
+        """
+        # Normalizar puerto
+        if puerto_salida is None:
+            return "TERRESTRE"
+        puerto = str(puerto_salida).strip()
+        if not puerto or puerto == "-":
+            return "TERRESTRE"
+
+        # Puerto está set → marítimo; decidir ISO vs FLEXI por peso
+        if peso_flexi is None:
+            return "ISO"
+        peso_str = str(peso_flexi).strip()
+        if not peso_str or peso_str == "0" or peso_str == "0.0":
+            return "ISO"
+        try:
+            if float(peso_str) <= 0:
+                return "ISO"
+        except (ValueError, TypeError):
+            # No se pudo parsear → tratar como ISO (conservador)
+            return "ISO"
+        return "FLEXI"
+
     def _mail_nombre_carpeta(self, ruta_contenedores, carpeta_temp):
         """Extrae datos del Excel CONTENEDORES y arma el nombre de carpeta."""
         if not ruta_contenedores:
@@ -2632,13 +2661,15 @@ class App(ctk.CTk):
                 datos = self._leer_xlsx_moderno(ruta_contenedores)
             else:
                 datos = self._leer_xls_antiguo(ruta_contenedores)
-            f_celda, pe_celda, carp_celda, dest_celda, bl_celda, trans_final, patente, precintos, guarda = datos
+            f_celda, pe_celda, carp_celda, dest_celda, bl_celda, trans_final, patente, precintos, guarda, *_ = datos
+            puerto_salida = _[0] if _ else ""
+            peso_flexi = _[1] if len(_) > 1 else ""
         except Exception as e:
             self._log(f"     ⚠ No se pudo leer el Excel: {e}")
             return os.path.basename(carpeta_temp).replace("_tmp_", "Papeles_")
 
         # Abreviar destinatario
-        def abreviar(nombre):
+        def abreviar(nombre, tipo):
             n = (nombre or "").upper()
             if "VITAPRO" in n: return "VITAPRO"
             if "EWOS" in n: return "EWOS"
@@ -2646,7 +2677,10 @@ class App(ctk.CTk):
             if "DICOAL" in n: return "DICOAL"
             if "CARGILL" in n: return "CARGILL"
             if "BIOMAR" in n: return "BIOMAR"
-            return nombre[:15]
+            # Marítimo: nombre completo; terrestre: truncar como antes
+            if tipo == "TERRESTRE":
+                return (nombre or "")[:15]
+            return nombre
 
         # Obtener P.E. completo
         pe_origen = pe_celda if pe_celda else ""
@@ -2664,21 +2698,32 @@ class App(ctk.CTk):
             frac = f"F{match_frac.group(1)}"
 
         # Armar nombre: 16_05_2026_1_TERRESTRE_398W_560093_NUTRECO_F1
+        # (o marítimo: 16_05_2026_1_ISO_398W_560093_NUTRECO_TRP)
         fecha_clean = f_celda.replace("/", "_") if f_celda else "sin_fecha"
         # Asegurar formato DD_MM_YYYY con leading zeros
         m = re.match(r"(\d{1,2})_(\d{1,2})_(\d{4})", fecha_clean)
         if m:
             fecha_clean = f"{int(m.group(1)):02d}_{int(m.group(2)):02d}_{m.group(3)}"
+
+        # Clasificar tipo de transporte a partir de Puerto Salida / Peso Flexi
+        tipo = self._clasificar_tipo_transporte(puerto_salida, peso_flexi)
+
         partes = [
             fecha_clean,
             cant,
-            "TERRESTRE",
+            tipo,
             pe_recortado or "PE",
             str(carp_celda)[:10] if carp_celda else "0",
-            abreviar(dest_celda or ""),
+            abreviar(dest_celda or "", tipo),
         ]
-        if frac:
-            partes.append(frac)
+        # Sufijo: terrestre → fracción; marítimo (ISO/FLEXI) → puerto de salida
+        if tipo == "TERRESTRE":
+            if frac:
+                partes.append(frac)
+        else:
+            puerto_sufijo = str(puerto_salida).strip() if puerto_salida else ""
+            if puerto_sufijo:
+                partes.append(puerto_sufijo)
 
         return "_".join(partes)
 
@@ -2727,17 +2772,21 @@ class App(ctk.CTk):
                 else:
                     datos = self._leer_xls_antiguo(ruta)
                 f_celda, pe_celda, carp_celda, dest_celda = datos[0], datos[1], datos[2], datos[3]
+                puerto = datos[9] if len(datos) > 9 else ""
+                peso = datos[10] if len(datos) > 10 else ""
                 pe = (pe_celda or "").strip()[-5:].lstrip("0")
-                return f_celda, pe, carp_celda, dest_celda
+                return f_celda, pe, carp_celda, dest_celda, puerto, peso
             except Exception as e:
                 self._log(f"  ⚠ Error leyendo {os.path.basename(ruta)}: {e}")
-                return "", "", "", ""
+                return "", "", "", "", "", ""
 
-        def _abreviar_dest(dest):
+        def _abreviar_dest(dest, tipo):
             d = (dest or "").upper()
             for abr in ("VITAPRO", "EWOS", "NUTRECO", "DICOAL", "CARGILL", "BIOMAR"):
                 if abr in d: return abr
-            return (dest or "")[:15]
+            if tipo == "TERRESTRE":
+                return (dest or "")[:15]
+            return dest
 
         def _formatear_fecha(f_celda):
             """13/05/2026 → 13_05_2026 (con leading zeros)"""
@@ -2751,8 +2800,8 @@ class App(ctk.CTk):
         ruta_comparte = os.path.join(carpeta_temp, comparte_fn)
         ruta_cierra   = os.path.join(carpeta_temp, cierra_fn)
 
-        f_a, pe_a, carp_a, dest_a = _extraer_datos(ruta_comparte)
-        f_b, pe_b, carp_b, dest_b = _extraer_datos(ruta_cierra)
+        f_a, pe_a, carp_a, dest_a, puerto_a, peso_a = _extraer_datos(ruta_comparte)
+        f_b, pe_b, carp_b, dest_b, puerto_b, peso_b = _extraer_datos(ruta_cierra)
 
         if not pe_a or not pe_b:
             self._log("  ⚠ No se pudo extraer PE de los Contenedores")
@@ -2844,9 +2893,22 @@ class App(ctk.CTk):
 
         carpetas_creadas = []
 
+        # Tipo de transporte independiente por archivo (A y B pueden ser terrestre / marítimo)
+        tipo_a = self._clasificar_tipo_transporte(puerto_a, peso_a)
+        tipo_b = self._clasificar_tipo_transporte(puerto_b, peso_b)
+
+        def _append_suffix(parts, frac, tipo, puerto):
+            if tipo == "TERRESTRE":
+                if frac:
+                    parts.append(frac)
+            else:
+                p = str(puerto).strip() if puerto else ""
+                if p:
+                    parts.append(p)
+
         # Carpeta A: COMPARTIDO
-        pa = [fecha_str, cant, "TERRESTRE", pe_a, str(carp_a)[:10] if carp_a else "0", _abreviar_dest(dest_a)]
-        if frac_a: pa.append(frac_a)
+        pa = [fecha_str, cant, tipo_a, pe_a, str(carp_a)[:10] if carp_a else "0", _abreviar_dest(dest_a, tipo_a)]
+        _append_suffix(pa, frac_a, tipo_a, puerto_a)
         pa.append("COMPARTIDO")
         archivos_a = [comparte_fn]
         if hoja_a: archivos_a.append(hoja_a)
@@ -2856,8 +2918,8 @@ class App(ctk.CTk):
         self._log(f"  📁 {'/'.join(ruta_a.split(chr(92))[-2:])} ({len(archivos_a)} archivos)")
 
         # Carpeta B: COMPARTIDO_CERRA
-        pb = [fecha_str, cant, "TERRESTRE", pe_b, str(carp_b)[:10] if carp_b else "0", _abreviar_dest(dest_b)]
-        if frac_b: pb.append(frac_b)
+        pb = [fecha_str, cant, tipo_b, pe_b, str(carp_b)[:10] if carp_b else "0", _abreviar_dest(dest_b, tipo_b)]
+        _append_suffix(pb, frac_b, tipo_b, puerto_b)
         pb.append("COMPARTIDO_CERRADO")
         archivos_b = [cierra_fn]
         if hoja_b: archivos_b.append(hoja_b)
@@ -3985,7 +4047,7 @@ class App(ctk.CTk):
                         datos = self._leer_xlsx_moderno(ruta_excel)
                     else:
                         datos = self._leer_xls_antiguo(ruta_excel)
-                    f_celda, pe_celda, carp_celda, dest_celda, bl_celda, trans_final, primera_patente, precintos, guarda = datos
+                    f_celda, pe_celda, carp_celda, dest_celda, bl_celda, trans_final, primera_patente, precintos, guarda, *_ = datos
 
                     pe_origen = pe_celda if pe_celda else pe_carpeta
                     pe_recortado = pe_origen[-5:].lstrip("0") if pe_origen else "No detectado"
@@ -4625,6 +4687,7 @@ class App(ctk.CTk):
 
         f_celda = pe_celda = carp_celda = dest_celda = bl_celda = ""
         transporte_encontrado = primera_patente = guarda = ""
+        puerto_salida = peso_flexi = ""
         col_patente = None
 
         for r in range(sheet.nrows):
@@ -4655,6 +4718,18 @@ class App(ctk.CTk):
                         nxt = sheet.cell_value(r, c + 1) if c + 1 < sheet.ncols else None
                         if nxt and not bl_celda:
                             bl_celda = str(nxt).strip()
+                    elif "PUERTO SALIDA" in val_up or "P. SALIDA" in val_up:
+                        nxt = sheet.cell_value(r, c + 1) if c + 1 < sheet.ncols else None
+                        if nxt and not puerto_salida:
+                            puerto_salida = str(nxt).strip()
+                    elif "PESO FLEXI" in val_up:
+                        nxt = sheet.cell_value(r, c + 1) if c + 1 < sheet.ncols else None
+                        if nxt != "" and nxt is not None and not peso_flexi:
+                            # xlrd: float → int si es entero, sino string
+                            if isinstance(nxt, float):
+                                peso_flexi = str(int(nxt)) if nxt.is_integer() else str(nxt)
+                            else:
+                                peso_flexi = str(nxt).strip()
                     if "PATENTE" in val_up:
                         col_patente = c
                     # La columna de precintos no se busca más por etiqueta, se toma directo de col 1
@@ -4714,7 +4789,7 @@ class App(ctk.CTk):
         # Si no se encontró B/L, buscar por número de carpeta en la misma hoja
         if not bl_celda and carp_celda:
             bl_celda = buscar_bl_por_carpeta_xls(sheet, carp_celda)
-        return f_celda, pe_celda, carp_celda, dest_celda, bl_celda, transporte_encontrado, primera_patente, precintos, guarda
+        return f_celda, pe_celda, carp_celda, dest_celda, bl_celda, transporte_encontrado, primera_patente, precintos, guarda, puerto_salida, peso_flexi
 
     def _completar_bl_por_carpeta(self, wb, ws_actual):
         """Recorre las filas de la hoja SOBRES. Si B/L (col 9) es '-', busca
@@ -4805,6 +4880,7 @@ class App(ctk.CTk):
 
         f_celda = pe_celda = carp_celda = dest_celda = bl_celda = ""
         transporte_encontrado = primera_patente = guarda = ""
+        puerto_salida = peso_flexi = ""
         col_patente = None
 
         for r in range(1, ws.max_row + 1):
@@ -4833,6 +4909,18 @@ class App(ctk.CTk):
                         nxt = ws.cell(row=r, column=c + 1).value
                         if nxt and not bl_celda:
                             bl_celda = str(nxt).strip()
+                    elif "PUERTO SALIDA" in val_up or "P. SALIDA" in val_up:
+                        nxt = ws.cell(row=r, column=c + 1).value
+                        if nxt and not puerto_salida:
+                            puerto_salida = str(nxt).strip()
+                    elif "PESO FLEXI" in val_up:
+                        nxt = ws.cell(row=r, column=c + 1).value
+                        if nxt != "" and nxt is not None and not peso_flexi:
+                            # openpyxl: float → int si es entero, sino string
+                            if isinstance(nxt, float):
+                                peso_flexi = str(int(nxt)) if nxt.is_integer() else str(nxt)
+                            else:
+                                peso_flexi = str(nxt).strip()
                     if "PATENTE" in val_up:
                         col_patente = c
                     # La columna de precintos no se busca más por etiqueta, se toma directo de col 1
@@ -4888,7 +4976,7 @@ class App(ctk.CTk):
             bl_celda = buscar_bl_por_carpeta_xlsx(wb, pestana_chofer, carp_celda)
 
         wb.close()
-        return f_celda, pe_celda, carp_celda, dest_celda, bl_celda, transporte_encontrado, primera_patente, precintos, guarda
+        return f_celda, pe_celda, carp_celda, dest_celda, bl_celda, transporte_encontrado, primera_patente, precintos, guarda, puerto_salida, peso_flexi
 
     def _agregar_fila_planillas(self, registro):
         """Agrega una fila a la tabla de planillas (thread-safe, en hilo principal)."""
