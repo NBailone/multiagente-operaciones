@@ -1410,16 +1410,15 @@ class App(ctk.CTk):
     def _detectar_tipo_carpeta(self, nombre_carpeta: str) -> str:
         """Return transport type from folder name: TERRESTRE, ISO, or FLEXI.
 
-        Parses the third segment (0-indexed, index 2) of the underscore-
-        separated folder name set during mail processing. Old-format
-        folders without enough segments default to TERRESTRE.
+        Folder format: DD_MM_YYYY_CANT_TIPO_PE_CARPETA_DEST_[SUFFIX]
+        The type is at index 4 (0-indexed). Old-format folders default to TERRESTRE.
         """
         partes = nombre_carpeta.split("_")
-        if len(partes) < 3:
+        if len(partes) < 5:
             return "TERRESTRE"
-        tipo = partes[2]
+        tipo = partes[4]
         if tipo not in ("TERRESTRE", "ISO", "FLEXI"):
-            return "TERRESTRE"    # unknown type → safe default
+            return "TERRESTRE"
         return tipo
 
     def _imp_ejecutar(self, seleccionadas):
@@ -3958,6 +3957,48 @@ class App(ctk.CTk):
         finally:
             self.after(0, self._planillas_done)
 
+    def _buscar_buque_en_chofer(self, ruta_excel):
+        """Busca 'BUQUE' en la hoja CHOFERES del Excel y devuelve el valor de la derecha.
+
+        Soporta .xlsx (openpyxl) y .xls (xlrd). Case insensitive.
+        Devuelve string vacío si no encuentra.
+        """
+        try:
+            if str(ruta_excel).lower().endswith(".xlsx"):
+                wb = openpyxl.load_workbook(ruta_excel, data_only=True)
+                try:
+                    pestana = next((s for s in wb.sheetnames if "CHOFER" in s.upper()), None)
+                    if not pestana:
+                        return ""
+                    ws = wb[pestana]
+                    for r in range(1, ws.max_row + 1):
+                        for c in range(1, ws.max_column + 1):
+                            val = ws.cell(row=r, column=c).value
+                            if val and isinstance(val, str) and "BUQUE" in val.strip().upper():
+                                nxt = ws.cell(row=r, column=c + 1).value
+                                if nxt:
+                                    return str(nxt).strip()
+                finally:
+                    wb.close()
+            else:
+                import xlrd
+                book = xlrd.open_workbook(ruta_excel)
+                pestana = next((s for s in book.sheet_names() if "CHOFER" in s.upper()), None)
+                if not pestana:
+                    return ""
+                sheet = book.sheet_by_name(pestana)
+                for r in range(sheet.nrows):
+                    for c in range(sheet.ncols):
+                        val = sheet.cell_value(r, c)
+                        if val and isinstance(val, str) and "BUQUE" in val.strip().upper():
+                            if c + 1 < sheet.ncols:
+                                nxt = sheet.cell_value(r, c + 1)
+                                if nxt:
+                                    return str(nxt).strip()
+        except Exception as e:
+            self._log(f"  ⚠ Error buscando BUQUE en {os.path.basename(ruta_excel)}: {e}")
+        return ""
+
     def _planillas_core(self, tipos=None):
         """Lógica real del agente de planillas (modificada para GUI)."""
         escritorio = self._resolver_ruta("planillas_carga", "Desktop")
@@ -4070,13 +4111,26 @@ class App(ctk.CTk):
                         datos = self._leer_xlsx_moderno(ruta_excel)
                     else:
                         datos = self._leer_xls_antiguo(ruta_excel)
-                    f_celda, pe_celda, carp_celda, dest_celda, bl_celda, trans_final, primera_patente, precintos, guarda, *_ = datos
+                    f_celda, pe_celda, carp_celda, dest_celda, bl_celda, trans_final, primera_patente, precintos, guarda, puerto_salida, peso_flexi = datos
 
                     pe_origen = pe_celda if pe_celda else pe_carpeta
                     pe_recortado = pe_origen[-5:].lstrip("0") if pe_origen else "No detectado"
                     if not trans_final:
                         trans_final = "No detectado"
-                    bl_final = bl_celda if bl_celda else "-"
+
+                    # Determinar tipo de transporte: primero desde Excel, fallback desde nombre de carpeta
+                    tipo_transporte = self._clasificar_tipo_transporte(puerto_salida, peso_flexi)
+                    if tipo_transporte == "TERRESTRE":
+                        # Fallback: el nombre de carpeta ya tiene el tipo correcto (índice 4)
+                        partes_carpeta = item.split("_")
+                        if len(partes_carpeta) > 4 and partes_carpeta[4] in ("ISO", "FLEXI"):
+                            tipo_transporte = partes_carpeta[4]
+                    if tipo_transporte in ("ISO", "FLEXI"):
+                        # Marítimo: buscar BUQUE en CHOFERES
+                        bl_detectado = self._buscar_buque_en_chofer(ruta_excel)
+                        bl_final = bl_detectado if bl_detectado else "-"
+                    else:
+                        bl_final = bl_celda if bl_celda else "-"
 
                     # Convertir carpeta a número si es posible (para evitar alerta de texto en Excel)
                     try:
@@ -4090,12 +4144,13 @@ class App(ctk.CTk):
                         "pe_recortado": pe_recortado,
                         "pe_completo": pe_origen if pe_origen else "No detectado",
                         "carp_celda": carp_celda_num,
-                        "terminal": "CHILE",
+                        "tipo_transporte": "TERRES" if tipo_transporte == "TERRESTRE" else tipo_transporte,
+                        "terminal": (puerto_salida[:9] if puerto_salida else "CHILE") if tipo_transporte in ("ISO", "FLEXI") else "CHILE",
                         "trans_final": trans_final,
                         "dest_celda": dest_celda,
                         "bl_final": bl_final,
-                        "frac_carpeta": frac_carpeta,
-                        "servicio": cant_final * int(self._cfg_obtener("valores", "ata_tares", 65000)),
+                        "frac_carpeta": "-" if tipo_transporte in ("ISO", "FLEXI") else frac_carpeta,
+                        "servicio": "-" if tipo_transporte in ("ISO", "FLEXI") else cant_final * int(self._cfg_obtener("valores", "ata_tares", 65000)),
                         "precintos": precintos,
                         "guarda": guarda if guarda else "No detectado",
                         "source_folder": item,
@@ -4235,10 +4290,13 @@ class App(ctk.CTk):
                     color_hex = COLORES_EMPRESA.get(dest_abrev, "FFFFFF")
                     fill_color = PatternFill(fill_type="solid", fgColor=color_hex)
 
+                    tipo = d1.get("tipo_transporte", "TERRESTRE")
+                    es_maritimo = tipo in ("ISO", "FLEXI")
                     valores_check_1 = {
-                        1: f_celda, 2: d1["cant_final"], 3: "TERRES", 4: d1["pe_recortado"],
-                        5: d1["carp_celda"], 6: "CHILE", 7: d1["trans_final"], 8: dest_abrev,
-                        9: d1["bl_final"], 10: d1["frac_carpeta"], 11: d1["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000)),
+                        1: f_celda, 2: d1["cant_final"], 3: tipo, 4: d1["pe_recortado"],
+                        5: d1["carp_celda"], 6: d1.get("terminal", "CHILE"), 7: d1["trans_final"], 8: dest_abrev,
+                        9: d1["bl_final"], 10: "-" if es_maritimo else d1["frac_carpeta"],
+                        11: "-" if es_maritimo else d1["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000)),
                     }
                     if ya_existe_en_hoja(ws_sobres, valores_check_1, excluir_columnas={9}):
                         self._log(f"  Omitido (ya existe): Carpeta {d1.get('carp_celda','?')} | P.E. {d1.get('pe_recortado','?')} | {f_celda}")
@@ -4247,7 +4305,7 @@ class App(ctk.CTk):
                     r1 = _escribir_fecha(ws_sobres, 3, f_celda)
                     for col in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11):
                         val = valores_check_1[col]
-                        font = font_chico if col == 7 else (font_mediano if col in (8, 9) else font_normal)
+                        font = font_chico if col == 7 else (font_mediano if col in (6, 8, 9) else font_normal)
                         fl = fill_color if col == 8 else None
                         _escribir_celda(ws_sobres, r1, col, val, font, fl)
 
@@ -4255,9 +4313,11 @@ class App(ctk.CTk):
                         dest2 = abreviar_dest(d2["dest_celda"])
                         color2 = COLORES_EMPRESA.get(dest2, "FFFFFF")
                         fill2 = PatternFill(fill_type="solid", fgColor=color2)
+                        tipo2 = d2.get("tipo_transporte", "TERRESTRE")
+                        es_maritimo2 = tipo2 in ("ISO", "FLEXI")
                         valores_check_2 = {
                             4: d2["pe_recortado"], 5: d2["carp_celda"],
-                            9: d2["bl_final"], 10: d2["frac_carpeta"],
+                            9: d2["bl_final"], 10: "-" if es_maritimo2 else d2["frac_carpeta"],
                         }
                         r2 = r1 + 1
                         # Fecha (col 1) merge con r1
@@ -4270,13 +4330,13 @@ class App(ctk.CTk):
 
                         # Columnas individuales para fila 2
                         for col, val in valores_check_2.items():
-                            font = font_chico if col == 7 else (font_mediano if col in (8, 9) else font_normal)
+                            font = font_chico if col == 7 else (font_mediano if col in (6, 8, 9) else font_normal)
                             fl = fill2 if col == 8 else None
                             _escribir_celda(ws_sobres, r2, col, val, font, fl)
                         # Cols compartidas (merge) para fila 2: B,C,F,G,H,K
                         for col in (2, 3, 6, 7, 8, 11):
                             val = valores_check_1[col]
-                            font = font_chico if col == 7 else (font_mediano if col == 8 else font_normal)
+                            font = font_chico if col == 7 else (font_mediano if col in (6, 8) else font_normal)
                             _escribir_celda(ws_sobres, r2, col, val, font)
                         # Merge vertical para B(2), C(3), F(6), G(7), H(8), K(11)
                         for col in (2, 3, 6, 7, 8, 11):
@@ -4450,11 +4510,14 @@ class App(ctk.CTk):
 
                 precio_base = int(self._cfg_obtener("valores", "precio_carpeta", 49000))
                 precio_carpeta = precio_base if es_primero_del_dia else precio_base // 2
-                servicio_ata = d1["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000))
+                tipo_cobro = d1.get("tipo_transporte", "TERRESTRE")
+                es_maritimo_cobro = tipo_cobro in ("ISO", "FLEXI")
+                servicio_ata = "-" if es_maritimo_cobro else d1["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000))
 
                 valores_fila = {
-                    1: f_celda, 2: d1["cant_final"], 3: "TERRES", 4: d1["pe_recortado"],
-                    5: d1["carp_celda"], 6: d1["frac_carpeta"], 7: servicio_ata, 8: precio_carpeta,
+                    1: f_celda, 2: d1["cant_final"], 3: tipo_cobro, 4: d1["pe_recortado"],
+                    5: d1["carp_celda"], 6: "-" if es_maritimo_cobro else d1["frac_carpeta"],
+                    7: servicio_ata, 8: precio_carpeta,
                 }
                 valores_check = {c: v for c, v in valores_fila.items() if c != 8}
                 if ya_existe_en_hoja(ws_cobro, valores_check):
@@ -4473,11 +4536,14 @@ class App(ctk.CTk):
                 if es_par:
                     # Segunda fila con datos del otro Contenedores
                     precio_carpeta_2 = precio_base // 2
-                    servicio_ata_2 = d2["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000))
+                    tipo2_cobro = d2.get("tipo_transporte", "TERRESTRE")
+                    es_maritimo2_cobro = tipo2_cobro in ("ISO", "FLEXI")
+                    servicio_ata_2 = "-" if es_maritimo2_cobro else d2["cant_final"] * int(self._cfg_obtener("valores", "ata_tares", 65000))
                     r2 = r1 + 1
 
-                    vals2 = {1: f_celda, 2: d2["cant_final"], 3: "TERRES", 4: d2["pe_recortado"],
-                             5: d2["carp_celda"], 6: d2["frac_carpeta"], 7: servicio_ata_2, 8: precio_carpeta_2}
+                    vals2 = {1: f_celda, 2: d2["cant_final"], 3: tipo2_cobro, 4: d2["pe_recortado"],
+                             5: d2["carp_celda"], 6: "-" if es_maritimo2_cobro else d2["frac_carpeta"],
+                             7: servicio_ata_2, 8: precio_carpeta_2}
                     for col, val in vals2.items():
                         cell = ws_cobro.cell(row=r2, column=col)
                         cell.value = val
@@ -4487,7 +4553,7 @@ class App(ctk.CTk):
                     # Merge fecha (col 1)
                     ws_cobro.merge_cells(start_row=r1, start_column=1, end_row=r2, end_column=1)
                     ws_cobro.cell(row=r1, column=1).alignment = center
-                    # Merge Cantidad (col 2), TERRES (col 3) y Servicio ATA (col 7)
+                    # Merge Cantidad (col 2), Tipo (col 3) y Servicio ATA (col 7)
                     for col in (2, 3, 7):
                         ws_cobro.merge_cells(start_row=r1, start_column=col, end_row=r2, end_column=col)
                         ws_cobro.cell(row=r1, column=col).alignment = center
@@ -5030,7 +5096,7 @@ class App(ctk.CTk):
             registro["dest_celda"],
             registro["bl_final"],
             registro["frac_carpeta"],
-            f'${registro["servicio"]:,}',
+            "-" if registro["servicio"] == "-" else f'${registro["servicio"]:,}',
         )
         self.tree_planillas.insert("", "end", values=valores, tags=(tag,) if tag else ())
 
