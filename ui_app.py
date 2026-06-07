@@ -369,14 +369,21 @@ class App(ctk.CTk):
             self.sidebar, fg_color=Palette.DIVIDER, height=1
         ).pack(fill="x", padx=14, pady=(4, 4))
 
-        # ── Navegación ───────────────────────────────────────────────
+        # ── Zona de navegación con scroll ─────────────────────────────
+        self._nav_scroll = ctk.CTkScrollableFrame(
+            self.sidebar, fg_color="transparent",
+            scrollbar_button_color=Palette.TEXT_MUTED,
+            scrollbar_button_hover_color=Palette.TEXT_SECONDARY,
+        )
+        self._nav_scroll.pack(fill="both", expand=True, padx=0, pady=0)
+
         nav_label = ctk.CTkLabel(
-            self.sidebar,
-            text="AGENTES",
+            self._nav_scroll,
+            text="MÓDULOS",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=Palette.TEXT_MUTED,
         )
-        nav_label.pack(anchor="w", padx=14, pady=(0, 4))
+        nav_label.pack(anchor="w", padx=14, pady=(6, 4))
 
         self.btn_descargar = self._crear_btn_nav(
             "Descargar Mails", "📥", 0, lambda: self._cambiar_panel("descargar")
@@ -394,35 +401,25 @@ class App(ctk.CTk):
             "Backup", "💾", 4, lambda: self._cambiar_panel("backup")
         )
 
-        # ── Separador ────────────────────────────────────────────────
-        ctk.CTkFrame(
-            self.sidebar, fg_color=Palette.DIVIDER, height=1
-        ).pack(fill="x", padx=14, pady=(16, 10))
-
-        # ── Ajustes (abajo del todo) ─────────────────────────────────
-        nav_ajustes_label = ctk.CTkLabel(
-            self.sidebar,
-            text="CONFIGURACIÓN",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-            text_color=Palette.TEXT_MUTED,
-        )
-        nav_ajustes_label.pack(anchor="w", padx=14, pady=(6, 4))
-
         self.btn_ajustes = self._crear_btn_nav(
             "Ajustes", "⚙", 5, lambda: self._cambiar_panel("ajustes")
         )
 
+        # ── Separador ────────────────────────────────────────────────
+        ctk.CTkFrame(
+            self._nav_scroll, fg_color=Palette.DIVIDER, height=1
+        ).pack(fill="x", padx=14, pady=(16, 10))
+
         # ── Súper Auto Toggle ────────────────────────────────────────
-        ctk.CTkFrame(self.sidebar, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(14, 8))
 
         ctk.CTkLabel(
-            self.sidebar, text="AUTOMATIZACIÓN",
+            self._nav_scroll, text="AUTOMATIZACIÓN",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
             text_color=Palette.TEXT_MUTED,
         ).pack(anchor="w", padx=14, pady=(0, 4))
 
         self._super_switch = ctk.CTkSwitch(
-            self.sidebar, text="⚡ Súper Auto",
+            self._nav_scroll, text="⚡ Súper Auto",
             font=ctk.CTkFont(family=FONT_FAMILY, size=13),
             progress_color=Palette.ACCENT,
             button_color=Palette.TEXT_SECONDARY,
@@ -432,7 +429,7 @@ class App(ctk.CTk):
         self._super_switch.pack(anchor="w", padx=12, pady=(2, 2))
 
         self._super_lbl_guarda = ctk.CTkLabel(
-            self.sidebar, text="",
+            self._nav_scroll, text="",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=Palette.TEXT_MUTED,
         )
@@ -454,17 +451,9 @@ class App(ctk.CTk):
         )
         self.btn_salir.pack(side="bottom", fill="x", padx=10, pady=10)
 
-        # ── Versión ──────────────────────────────────────────────────
-        ctk.CTkLabel(
-            self.sidebar,
-            text="v2.0 · 2026",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=9),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="bottom", pady=(0, 12))
-
     def _crear_btn_nav(self, texto, icono, idx, comando):
         btn = ctk.CTkButton(
-            self.sidebar,
+            self._nav_scroll,
             text=f"  {icono}  {texto}",
             font=ctk.CTkFont(family=FONT_FAMILY, size=14),
             fg_color="transparent",
@@ -6321,7 +6310,7 @@ class App(ctk.CTk):
         self._ent_correo_puerto = self._ajustes_row(
             parent, "Puerto IMAP:", str(self._cfg_obtener_correo("imap_puerto", PUERTO_IMAP)), width=80)
 
-        self._ajustes_seccion(parent, "Destinatarios — Correo Grupal (CARGA TERRESTRE)")
+        self._ajustes_seccion(parent, "Destinatarios — Planillas de Carga")
         default_grupal = "\n".join(self._cfg_obtener_correo("destinatarios_grupal", DESTINATARIOS_GRUPAL))
         self._ajustes_texto_grupal = ctk.CTkTextbox(
             parent, height=100, width=400,
