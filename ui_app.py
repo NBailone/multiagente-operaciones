@@ -641,10 +641,10 @@ class App(ctk.CTk):
 
         if nombre == "impresion":
             self._panel_impresion()
-            self.lbl_titulo_panel.configure(text="Agente de Impresión Documental")
+            self.lbl_titulo_panel.configure(text="Impresión Documental")
         elif nombre == "planillas":
             self._panel_planillas()
-            self.lbl_titulo_panel.configure(text="Completar Planillas (Sobres, Cobro, PC)")
+            self._actualizar_titulo_precintos()
         elif nombre == "descargar":
             self._panel_descargar()
             self.lbl_titulo_panel.configure(text="Descargar Mails")
@@ -4587,6 +4587,43 @@ class App(ctk.CTk):
                 except Exception:
                     pass
 
+    # ── Precintos disponibles ──────────────────────────────────────────
+    def _contar_precintos_disponibles(self):
+        """Cuenta precintos SIN ASIGNAR en PC.xlsx (col 1 llena, col 2 vacía).
+        Retorna el número o None si no encuentra la planilla."""
+        ruta_pc = buscar_archivo_en_pendrive(
+            "PC.xlsx", self._cfg_obtener_rutas("pc", os.path.join("TRABAJO", "01_PLANILLAS")))
+        if not ruta_pc:
+            ruta_pc = buscar_archivo_en_pendrive(
+                "PC_2026.xlsx", self._cfg_obtener_rutas("pc", os.path.join("TRABAJO", "01_PLANILLAS")))
+        if not ruta_pc:
+            return None
+        try:
+            wb = openpyxl.load_workbook(ruta_pc)
+            try:
+                ws = wb["SIN ASIGNACION"]
+            except KeyError:
+                ws = wb.active
+            disponibles = 0
+            for fila in range(2, ws.max_row + 1):
+                nro = ws.cell(row=fila, column=1).value
+                if nro and not ws.cell(row=fila, column=2).value:
+                    disponibles += 1
+            wb.close()
+            return disponibles
+        except Exception:
+            return None
+
+    def _actualizar_titulo_precintos(self):
+        """Actualiza lbl_titulo_panel con el conteo de precintos disponibles."""
+        disponibles = self._contar_precintos_disponibles()
+        if disponibles is None:
+            self.lbl_titulo_panel.configure(
+                text="Completar Planillas — No se encontró planilla PC")
+        else:
+            self.lbl_titulo_panel.configure(
+                text=f"Completar Planillas — Precintos disponibles: {disponibles}")
+
     def _completar_pc(self, datos_extraidos):
         """Llena la planilla PC (Precintos/Cables) en la hoja SIN ASIGNACION.
         Busca cada precinto de abajo hacia arriba y completa: Fecha, P.E., Guarda, Carpeta."""
@@ -5119,6 +5156,9 @@ class App(ctk.CTk):
             text="Análisis completado", text_color=Palette.SUCCESS
         )
         self._set_status("Análisis de planillas finalizado")
+
+        # Actualizar conteo de precintos disponibles
+        self._actualizar_titulo_precintos()
 
         # Mostrar popup de resumen si hay resultados pendientes
         if hasattr(self, "_resultados_pendientes") and self._resultados_pendientes:
