@@ -5247,6 +5247,26 @@ class App(ctk.CTk):
             text_color=Palette.TEXT_MUTED, anchor="w",
         ).pack(side="right", padx=12, pady=4)
 
+        # Agregar planilla de carga marítima (destildado por defecto)
+        var_plt_mar = ctk.BooleanVar(value=False)
+        checks["_PLANILLA_DE_CARGA_MARITIMA_"] = var_plt_mar
+        frame_item_plt_mar = ctk.CTkFrame(scroll, fg_color=Palette.BG_CARD, corner_radius=6)
+        frame_item_plt_mar.pack(fill="x", padx=4, pady=3)
+        ctk.CTkCheckBox(
+            frame_item_plt_mar, text="", variable=var_plt_mar, width=24,
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+        ).pack(side="left", padx=(8, 4), pady=8)
+        ctk.CTkLabel(
+            frame_item_plt_mar, text="Planillas de Carga Marítimas",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            text_color=Palette.TEXT_PRIMARY, anchor="w",
+        ).pack(side="left", padx=4, pady=4)
+        ctk.CTkLabel(
+            frame_item_plt_mar, text="Correo Grupal",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=Palette.TEXT_MUTED, anchor="w",
+        ).pack(side="right", padx=12, pady=4)
+
         # Botones de acción
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(fill="x", padx=16, pady=(0, 12))
@@ -5277,11 +5297,12 @@ class App(ctk.CTk):
         def enviar_seleccionados():
             seleccionadas = [ruta for nombre, ruta, _ in carpetas_encontradas if checks[nombre].get()]
             incluir_plt = checks["_PLANILLA_DE_CARGA_TERRESTRE_"].get()
-            if not seleccionadas and not incluir_plt:
-                messagebox.showwarning("Nada seleccionado", "Seleccioná al menos una carpeta o la Planilla de Carga.")
+            incluir_plt_mar = checks["_PLANILLA_DE_CARGA_MARITIMA_"].get()
+            if not seleccionadas and not incluir_plt and not incluir_plt_mar:
+                messagebox.showwarning("Nada seleccionado", "Seleccioná al menos una carpeta o Planilla de Carga.")
                 return
             popup.destroy()
-            self._despachar_carpetas(seleccionadas, incluir_plt)
+            self._despachar_carpetas(seleccionadas, incluir_plt, incluir_plt_mar)
 
         ctk.CTkButton(
             btn_frame, text="📤  Enviar Seleccionados", width=200, height=34,
@@ -5291,7 +5312,7 @@ class App(ctk.CTk):
             command=enviar_seleccionados,
         ).pack(side="right", padx=4)
 
-    def _despachar_carpetas(self, rutas_seleccionadas, incluir_planilla=False):
+    def _despachar_carpetas(self, rutas_seleccionadas, incluir_planilla=False, incluir_planilla_mar=False):
         """Procesa solo las carpetas elegidas por el usuario."""
         if self.tarea_activa:
             return
@@ -5310,7 +5331,8 @@ class App(ctk.CTk):
         t = threading.Thread(
             target=lambda: self._agente_correos_worker(
                 carpetas_filtro=rutas_seleccionadas,
-                incluir_planilla=incluir_planilla),
+                incluir_planilla=incluir_planilla,
+                incluir_planilla_mar=incluir_planilla_mar),
             daemon=True)
         t.start()
 
@@ -5341,19 +5363,20 @@ class App(ctk.CTk):
         t = threading.Thread(target=self._agente_correos_worker, daemon=True)
         t.start()
 
-    def _agente_correos_worker(self, carpetas_filtro=None, incluir_planilla=False):
+    def _agente_correos_worker(self, carpetas_filtro=None, incluir_planilla=False, incluir_planilla_mar=False):
         try:
-            self._correos_core(carpetas_filtro=carpetas_filtro, incluir_planilla=incluir_planilla)
+            self._correos_core(carpetas_filtro=carpetas_filtro, incluir_planilla=incluir_planilla, incluir_planilla_mar=incluir_planilla_mar)
         except Exception as e:
             self.after(0, lambda: self._correos_error(str(e)))
         finally:
             self.after(0, self._correos_done)
 
-    def _correos_core(self, carpetas_filtro=None, incluir_planilla=False):
+    def _correos_core(self, carpetas_filtro=None, incluir_planilla=False, incluir_planilla_mar=False):
         escritorio = self._resolver_ruta("planillas_carga", "Desktop")
         año_actual = datetime.now().strftime("%y")
 
-        todas_las_planillas = []
+        terr_planillas = []
+        mar_planillas = []
         correos_a_subir = []
 
         self._log(f"Escaneando Escritorio: {escritorio}")
@@ -5374,7 +5397,7 @@ class App(ctk.CTk):
                 if d in n1.upper():
                     dest1 = d; break
             if not dest1:
-                match = re.search(r"TERRESTRE_[^_]+_[^_]+_([A-Z]+)", n1, re.IGNORECASE)
+                match = re.search(r"(?:TERRESTRES?|ISO|FLEXI)_[^_]+_[^_]+_([A-Z]+)", n1, re.IGNORECASE)
                 dest1 = match.group(1) if match else n1
             if dest1 in dests_usados:
                 continue
@@ -5398,13 +5421,18 @@ class App(ctk.CTk):
             except Exception:
                 continue
 
+            es_maritimo = bool(re.search(r"_(ISO|FLEXI)_", item))
+
             # Buscar todas las planillas de carga en el escritorio para el correo grupal
             for archivo in archivos:
                 up = archivo.upper()
                 if up.startswith("PLANILLA DE CARGA") and (
                     up.endswith(".XLSX") or up.endswith(".XLS")
                 ):
-                    todas_las_planillas.append(os.path.join(ruta_carpeta, archivo))
+                    if "_TERRESTRE_" in item.upper():
+                        terr_planillas.append(os.path.join(ruta_carpeta, archivo))
+                    elif "_ISO_" in item.upper() or "_FLEXI_" in item.upper():
+                        mar_planillas.append(os.path.join(ruta_carpeta, archivo))
 
             # Si hay filtro de carpetas, solo procesar los individuales seleccionados
             if carpetas_filtro is not None and ruta_carpeta not in carpetas_filtro:
@@ -5412,15 +5440,23 @@ class App(ctk.CTk):
 
             # Filtrar archivos para correo
             adjuntos_validos = []
-            for archivo in archivos:
-                up_name = archivo.upper()
-                es_plt = up_name.startswith("PLT") and up_name.endswith(".PDF")
-                es_mic = re.search(f"^{año_actual}AR", up_name) and up_name.endswith(".PDF")
-                es_excel_num = re.search(r"^\d", archivo) and (
-                    up_name.endswith(".XLSX") or up_name.endswith(".XLS")
-                )
-                if es_plt or es_mic or es_excel_num:
-                    adjuntos_validos.append(archivo)
+            if es_maritimo:
+                for archivo in archivos:
+                    up_name = archivo.upper()
+                    es_contenedores = "CONTENEDORES" in up_name and (up_name.endswith(".XLSX") or up_name.endswith(".XLS"))
+                    es_get_pdf = up_name.startswith("GET") and up_name.endswith(".PDF")
+                    if es_contenedores or es_get_pdf:
+                        adjuntos_validos.append(archivo)
+            else:
+                for archivo in archivos:
+                    up_name = archivo.upper()
+                    es_plt = up_name.startswith("PLT") and up_name.endswith(".PDF")
+                    es_mic = re.search(f"^{año_actual}AR", up_name) and up_name.endswith(".PDF")
+                    es_excel_num = re.search(r"^\d", archivo) and (
+                        up_name.endswith(".XLSX") or up_name.endswith(".XLS")
+                    )
+                    if es_plt or es_mic or es_excel_num:
+                        adjuntos_validos.append(archivo)
 
             # Detectar si esta carpeta es parte de un par COMPARTIDO
             dest_folder = None
@@ -5458,7 +5494,7 @@ class App(ctk.CTk):
 
                     # Cuerpo: nombre de carpetas desde el PE
                     def _nombre_desde_pe(nombre_carpeta):
-                        m = re.search(r"TERRESTRE_(.+)", nombre_carpeta, re.IGNORECASE)
+                        m = re.search(r"(?:TERRESTRES?|ISO|FLEXI)_(.+)", nombre_carpeta, re.IGNORECASE)
                         return m.group(1) if m else nombre_carpeta
                     cuerpo = f"{asunto}\n\n{_nombre_desde_pe(n1)}\n{_nombre_desde_pe(n2)}\n"
 
@@ -5477,8 +5513,29 @@ class App(ctk.CTk):
                     self.after(0, lambda a=asunto, n=len(todos_adjuntos): self._agregar_fila_correos(
                         "Individual", a, "3 destinatarios", str(n)))
                     self._log(f"Correo COMPARTIDO preparado: {asunto} ({len(todos_adjuntos)} adjuntos)")
+                elif es_maritimo and adjuntos_validos:
+                    match_sufijo = re.search(r"(?:TERRESTRES?|ISO|FLEXI)_(.*)", item, re.IGNORECASE)
+                    sufijo = match_sufijo.group(1) if match_sufijo else item
+
+                    c_get = sum(1 for a in adjuntos_validos if a.upper().startswith("GET") and a.upper().endswith(".PDF"))
+                    t_salida = "SALIDAS" if c_get > 1 else "SALIDA"
+                    asunto = f"{t_salida}, PLANILLA COMPLETA DE EXPORTACIÓN_{sufijo}"
+
+                    msg_ind = MIMEMultipart()
+                    msg_ind["Subject"] = asunto
+                    msg_ind["From"] = self._cfg_obtener_correo("usuario", "")
+                    msg_ind["To"] = ", ".join(self._cfg_obtener_correo("destinatarios_individual", DESTINATARIOS_INDIVIDUAL))
+                    msg_ind.attach(MIMEText(f"{asunto}\n", "plain"))
+
+                    for archivo_nombre in adjuntos_validos:
+                        adjuntar_archivo(msg_ind, os.path.join(ruta_carpeta, archivo_nombre))
+                    correos_a_subir.append(("Individual", asunto, msg_ind, len(adjuntos_validos)))
+
+                    self.after(0, lambda a=asunto, n=len(adjuntos_validos): self._agregar_fila_correos(
+                        "Individual", a, "3 destinatarios", str(n)))
+                    self._log(f"Correo individual marítimo preparado: {asunto}")
                 else:
-                    match_sufijo = re.search(r"TERRESTRES?_(.*)", item, re.IGNORECASE)
+                    match_sufijo = re.search(r"(?:TERRESTRES?|ISO|FLEXI)_(.*)", item, re.IGNORECASE)
                     sufijo = match_sufijo.group(1) if match_sufijo else item
 
                     c_plt = sum(1 for a in adjuntos_validos if a.upper().startswith("PLT"))
@@ -5503,7 +5560,7 @@ class App(ctk.CTk):
 
         # Correo grupal (solo si no estamos en modo Elegir con planilla desactivada)
         incluir_plt = incluir_planilla or carpetas_filtro is None
-        if todas_las_planillas and incluir_plt:
+        if terr_planillas and incluir_plt:
             msg_grupal = MIMEMultipart()
             msg_grupal["Subject"] = "CARGA TERRESTRE"
             msg_grupal["From"] = self._cfg_obtener_correo("usuario", "")
@@ -5517,7 +5574,7 @@ class App(ctk.CTk):
                 ruta_maestra = buscar_archivo_en_pendrive(nombre_ct[:-5] + ".xls", carpeta_ct)
 
             # Ordenar planillas por nombre
-            planillas_ordenadas = sorted(todas_las_planillas, key=lambda p: os.path.basename(p).upper())
+            planillas_ordenadas = sorted(terr_planillas, key=lambda p: os.path.basename(p).upper())
 
             cuerpo = "Estimados,\n\nSe adjuntan las planillas de carga correspondientes:\n\n"
             for p in planillas_ordenadas:
@@ -5528,8 +5585,8 @@ class App(ctk.CTk):
             cuerpo += "\nSaludos cordiales."
             msg_grupal.attach(MIMEText(cuerpo, "plain"))
 
-            n_adj_grupal = len(todas_las_planillas)
-            for p in todas_las_planillas:
+            n_adj_grupal = len(terr_planillas)
+            for p in terr_planillas:
                 adjuntar_archivo(msg_grupal, p)
             if ruta_maestra:
                 adjuntar_archivo(msg_grupal, ruta_maestra)
@@ -5545,6 +5602,39 @@ class App(ctk.CTk):
                 ),
             )
             self._log("Correo grupal preparado: CARGA TERRESTRE")
+
+        # Correo grupal marítimo (solo si no estamos en modo Elegir con planilla desactivada)
+        incluir_mar_plt = incluir_planilla_mar or carpetas_filtro is None
+        if mar_planillas and incluir_mar_plt:
+            msg_grupal = MIMEMultipart()
+            asunto_grupal = "PLANILLA DE CARGA" if len(mar_planillas) == 1 else "PLANILLAS DE CARGA"
+            msg_grupal["Subject"] = asunto_grupal
+            msg_grupal["From"] = self._cfg_obtener_correo("usuario", "")
+            msg_grupal["To"] = ", ".join(self._cfg_obtener_correo("destinatarios_grupal", DESTINATARIOS_GRUPAL))
+
+            mar_ordenadas = sorted(mar_planillas, key=lambda p: os.path.basename(p).upper())
+
+            if len(mar_planillas) == 1:
+                cuerpo = "Estimados,\n\nSe adjunta la planilla de carga correspondiente:\n\n"
+            else:
+                cuerpo = "Estimados,\n\nSe adjuntan las planillas de carga correspondientes:\n\n"
+            for p in mar_ordenadas:
+                nombre_sin_ext = os.path.splitext(os.path.basename(p))[0]
+                cuerpo += f"  • {nombre_sin_ext}\n"
+            cuerpo += "\nSaludos cordiales."
+            msg_grupal.attach(MIMEText(cuerpo, "plain"))
+
+            for p in mar_planillas:
+                adjuntar_archivo(msg_grupal, p)
+
+            correos_a_subir.append(("Grupal", asunto_grupal, msg_grupal, len(mar_planillas)))
+            self.after(
+                0,
+                lambda a=asunto_grupal, n=len(mar_planillas): self._agregar_fila_correos(
+                    "Grupal", a, "14 destinatarios", str(n)
+                ),
+            )
+            self._log(f"Correo grupal marítimo preparado: {asunto_grupal}")
 
         # Subir borradores en paralelo
         if correos_a_subir:
