@@ -29,3 +29,6 @@ Thumbs.db
 .env.local
 # ── Gentle AI ─────────────────────────────────
 .atl/.skill-registry.cache.json
+
+
+ui_config.json
