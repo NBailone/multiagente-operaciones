@@ -42,6 +42,7 @@ a = Analysis(
         'cv2',
         'numpy',
         'fitz',
+        'procesar_tickets',
     ],
     hookspath=[],
     hooksconfig={},

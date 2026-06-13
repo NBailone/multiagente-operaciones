@@ -9862,10 +9862,14 @@ class App(ctk.CTk):
     # ── GUARDAR AJUSTES ──────────────────────────────────────────────
     def _guardar_ajustes(self):
         try:
+            _g = lambda a: getattr(self, a, None)
+
             # Seguridad — validar que coincidan y actualizar cache
-            pw1 = self._ent_master_pw.get().strip()
-            pw2 = self._ent_master_pw_confirm.get().strip()
-            if pw1 != pw2:
+            ent_pw1 = _g('_ent_master_pw')
+            ent_pw2 = _g('_ent_master_pw_confirm')
+            pw1 = ent_pw1.get().strip() if ent_pw1 else self.config.get("seguridad", {}).get("password", "")
+            pw2 = ent_pw2.get().strip() if ent_pw2 else ""
+            if ent_pw1 and ent_pw2 and pw1 != pw2:
                 self._ajustes_lbl_status.configure(
                     text="✗ Las contraseñas no coinciden. Corregí y volvé a guardar.",
                     text_color=Palette.ERROR)
@@ -9874,110 +9878,144 @@ class App(ctk.CTk):
             self._master_pw_cache = pw1
 
             # Correo (siempre encriptado con la key del .env, no con la master)
-            mail_pw = self._ent_correo_password.get().strip()
+            ent = _g('_ent_correo_password')
+            mail_pw = ent.get().strip() if ent else ""
             key = os.environ["MULTIAGENTE_SECRET_KEY"]
-            correo_cfg = {
-                "usuario": self._ent_correo_usuario.get().strip(),
-                "password": self._encrypt_val(mail_pw, key),
-                "imap_server": self._ent_correo_imap.get().strip(),
-                "imap_puerto": int(self._ent_correo_puerto.get().strip() or "143"),
-                "destinatarios_grupal": [
-                    l.strip() for l in self._ajustes_texto_grupal.get("1.0", "end-1c").split("\n") if l.strip()
-                ],
-                "destinatarios_individual": [
-                    l.strip() for l in self._ajustes_texto_ind.get("1.0", "end-1c").split("\n") if l.strip()
-                ],
-                "remitente_balanza": self._ent_remitente_balanza.get().strip(),
-            }
-            self.config["correo"] = correo_cfg
+            correo_cfg = {}
+            for attr, cfg_key in [('_ent_correo_usuario', 'usuario'), ('_ent_correo_password', 'password'),
+                                  ('_ent_correo_imap', 'imap_server'), ('_ent_correo_puerto', 'imap_puerto'),
+                                  ('_ent_remitente_balanza', 'remitente_balanza')]:
+                w = _g(attr)
+                if w is not None:
+                    raw = w.get().strip()
+                    correo_cfg[cfg_key] = int(raw) if cfg_key == 'imap_puerto' else raw
+            if mail_pw:
+                correo_cfg["password"] = self._encrypt_val(mail_pw, key)
+            w = _g('_ajustes_texto_grupal')
+            if w is not None:
+                correo_cfg["destinatarios_grupal"] = [
+                    l.strip() for l in w.get("1.0", "end-1c").split("\n") if l.strip()
+                ]
+            w = _g('_ajustes_texto_ind')
+            if w is not None:
+                correo_cfg["destinatarios_individual"] = [
+                    l.strip() for l in w.get("1.0", "end-1c").split("\n") if l.strip()
+                ]
+            if correo_cfg:
+                self.config["correo"] = {**self.config.get("correo", {}), **correo_cfg}
 
             # Documentos
             docs_cfg = {}
-            for key_doc, ent in [("dorso_mic", self._ent_dorso_mic), ("dorso_crt", self._ent_dorso_crt),
-                             ("dorso_pe", self._ent_dorso_pe), ("permiso_exportacion", self._ent_permiso_exp),
-                             ("hoja_ruta", self._ent_hoja_ruta), ("sobre", self._ent_sobre)]:
-                try:
-                    docs_cfg[key_doc] = int(ent.get().strip())
-                except ValueError:
-                    pass
-            self.config["documentos"] = docs_cfg
+            for key_doc, attr in [("dorso_mic", "_ent_dorso_mic"), ("dorso_crt", "_ent_dorso_crt"),
+                                  ("dorso_pe", "_ent_dorso_pe"), ("permiso_exportacion", "_ent_permiso_exp"),
+                                  ("hoja_ruta", "_ent_hoja_ruta"), ("sobre", "_ent_sobre")]:
+                w = _g(attr)
+                if w is not None:
+                    try:
+                        docs_cfg[key_doc] = int(w.get().strip())
+                    except ValueError:
+                        pass
+            if docs_cfg:
+                self.config["documentos"] = {**self.config.get("documentos", {}), **docs_cfg}
 
             # Rutas
-            self.config["rutas"] = {
-                "sobres": self._ent_ruta_sobres.get().strip(),
-                "cobro": self._ent_ruta_cobro.get().strip(),
-                "pc": self._ent_ruta_pc.get().strip(),
-                "carga_terrestre_carpeta": self._ent_ruta_ct_carpeta.get().strip(),
-                "carga_terrestre_nombre": self._ent_ruta_ct_nombre.get().strip(),
-                "planillas_carga": self._ent_ruta_planillas.get().strip(),
-                "descarga_mails": self._ent_ruta_descarga.get().strip(),
-                "escritorio_nombre": self._ent_ruta_escritorio.get().strip(),
-                "backup_pendrive": self._ent_ruta_backup.get().strip(),
-                "mic_sellos": self._ent_ruta_mic_sellos.get().strip(),
-                "crt_original": self._ent_ruta_crt_original.get().strip(),
-            }
+            rutas_cfg = {}
+            for attr, cfg_key in [("_ent_ruta_sobres", "sobres"), ("_ent_ruta_cobro", "cobro"),
+                                  ("_ent_ruta_pc", "pc"), ("_ent_ruta_ct_carpeta", "carga_terrestre_carpeta"),
+                                  ("_ent_ruta_ct_nombre", "carga_terrestre_nombre"),
+                                  ("_ent_ruta_planillas", "planillas_carga"),
+                                  ("_ent_ruta_descarga", "descarga_mails"),
+                                  ("_ent_ruta_escritorio", "escritorio_nombre"),
+                                  ("_ent_ruta_backup", "backup_pendrive"),
+                                  ("_ent_ruta_mic_sellos", "mic_sellos"),
+                                  ("_ent_ruta_crt_original", "crt_original")]:
+                w = _g(attr)
+                if w is not None:
+                    rutas_cfg[cfg_key] = w.get().strip()
+            if rutas_cfg:
+                self.config["rutas"] = {**self.config.get("rutas", {}), **rutas_cfg}
 
             # Descarga Mails — guardar y sincronizar entries del panel Correos
-            self.config["descarga_mails"] = {
-                "papeles": self._ent_descarga_papeles.get().strip(),
-                "reglas": self._ent_descarga_reglas.get().strip(),
-                "sin_filtro": self._ent_descarga_sin_filtro.get().strip(),
-            }
+            descarga_cfg = {}
+            for attr, cfg_key in [("_ent_descarga_papeles", "papeles"),
+                                  ("_ent_descarga_reglas", "reglas"),
+                                  ("_ent_descarga_sin_filtro", "sin_filtro")]:
+                w = _g(attr)
+                if w is not None:
+                    descarga_cfg[cfg_key] = w.get().strip()
+            if descarga_cfg:
+                self.config["descarga_mails"] = {**self.config.get("descarga_mails", {}), **descarga_cfg}
             # Sincronizar los entries del panel Correos (si aún existen)
             for attr, src in [('_mail_entry_cantidad', '_ent_descarga_papeles'),
                               ('_mail_entry_cantidad_reglas', '_ent_descarga_reglas'),
                               ('_mail_entry_sin_filtro', '_ent_descarga_sin_filtro')]:
-                w = getattr(self, attr, None)
+                w = _g(attr)
                 if w is not None and w.winfo_exists():
-                    w.delete(0, "end")
-                    w.insert(0, getattr(self, src).get().strip())
+                    src_w = _g(src)
+                    if src_w is not None:
+                        w.delete(0, "end")
+                        w.insert(0, src_w.get().strip())
 
             # Valores
-            try:
-                precio_carpeta = int(self._ent_precio_carpeta.get().strip())
-            except ValueError:
-                precio_carpeta = 49000
-            try:
-                ata_tares = int(self._ent_ata_tares.get().strip())
-            except ValueError:
-                ata_tares = 65000
-            if hasattr(self, '_ajustes_texto_guardas'):
-                guardas = [l.strip() for l in self._ajustes_texto_guardas.get("1.0", "end-1c").split("\n") if l.strip()]
-            else:
-                guardas = self._cfg_obtener("valores", "guardas", ["Gonzalez"])
-            self.config["valores"] = {
-                "precio_carpeta": precio_carpeta,
-                "ata_tares": ata_tares,
-                "guardas": guardas if guardas else ["Gonzalez"],
-            }
+            valores_cfg = {}
+            w = _g('_ent_precio_carpeta')
+            if w is not None:
+                try:
+                    valores_cfg["precio_carpeta"] = int(w.get().strip())
+                except ValueError:
+                    valores_cfg["precio_carpeta"] = 49000
+            w = _g('_ent_ata_tares')
+            if w is not None:
+                try:
+                    valores_cfg["ata_tares"] = int(w.get().strip())
+                except ValueError:
+                    valores_cfg["ata_tares"] = 65000
+            w = _g('_ajustes_texto_guardas')
+            if w is not None:
+                guardas = [l.strip() for l in w.get("1.0", "end-1c").split("\n") if l.strip()]
+                if guardas:
+                    valores_cfg["guardas"] = guardas
+            if valores_cfg:
+                self.config["valores"] = {**self.config.get("valores", {}), **valores_cfg}
 
             # Súper Auto configuración
-            self.config["super_auto"] = {
-                "pasos": {
-                    "sobre": self._super_check_sobre.get(),
-                    "permiso": self._super_check_permiso.get(),
-                    "hoja_ruta": self._super_check_hoja_ruta.get(),
-                    "recibo_ata": self._super_check_recibo.get(),
-                    "aplicar_guarda": self._super_check_guarda.get(),
-                    "completar_planillas": self._super_check_planillas.get(),
-                }
-            }
+            super_cfg = {}
+            for attr, cfg_key in [("_super_check_sobre", "sobre"), ("_super_check_permiso", "permiso"),
+                                  ("_super_check_hoja_ruta", "hoja_ruta"), ("_super_check_recibo", "recibo_ata"),
+                                  ("_super_check_guarda", "aplicar_guarda"),
+                                  ("_super_check_planillas", "completar_planillas")]:
+                w = _g(attr)
+                if w is not None:
+                    super_cfg[cfg_key] = w.get()
+            if super_cfg:
+                pasos = dict(self.config.get("super_auto", {}).get("pasos", {}))
+                pasos.update(super_cfg)
+                self.config["super_auto"] = {"pasos": pasos}
 
-            self.config["seguridad"] = {
-                "password": self._encrypt_val(pw1, os.environ["MULTIAGENTE_SECRET_KEY"]),
-            }
+            # Seguridad — guardar contraseña encriptada
+            if ent_pw1 is not None:
+                self.config["seguridad"] = {
+                    "password": self._encrypt_val(pw1, os.environ["MULTIAGENTE_SECRET_KEY"]),
+                }
 
             # API Visión
-            custom_models_raw = self._ent_vision_custom_models.get("1.0", "end-1c")
-            custom_models = [l.strip() for l in custom_models_raw.split("\n") if l.strip()]
-            self.config["api_vision"] = {
-                "api_key": self._encrypt_val(self._ent_vision_api_key.get().strip(), self._clave_encriptacion()),
-                "model": self._ent_vision_model.get() or procesar_tickets.MODELO_VISION_DEFAULT,
-                "temperature": float(self._ent_vision_temperature.get().strip() or "0.1"),
-                "max_tokens": int(self._ent_vision_max_tokens.get().strip() or "4000"),
-                "timeout": int(self._ent_vision_timeout.get().strip() or "60"),
-                "custom_models": custom_models,
-            }
+            api_cfg = {}
+            w = _g('_ent_vision_custom_models')
+            if w is not None:
+                raw = w.get("1.0", "end-1c")
+                api_cfg["custom_models"] = [l.strip() for l in raw.split("\n") if l.strip()]
+            for attr, cfg_key, conv in [
+                ("_ent_vision_api_key", "api_key", lambda v: self._encrypt_val(v.strip(), self._clave_encriptacion())),
+                ("_ent_vision_model", "model", lambda v: v.strip() or procesar_tickets.MODELO_VISION_DEFAULT),
+                ("_ent_vision_temperature", "temperature", lambda v: float(v.strip() or "0.1")),
+                ("_ent_vision_max_tokens", "max_tokens", lambda v: int(v.strip() or "4000")),
+                ("_ent_vision_timeout", "timeout", lambda v: int(v.strip() or "60")),
+            ]:
+                w = _g(attr)
+                if w is not None:
+                    api_cfg[cfg_key] = conv(w.get())
+            if api_cfg:
+                self.config["api_vision"] = {**self.config.get("api_vision", {}), **api_cfg}
 
             self._guardar_config()
             self._ajustes_lbl_status.configure(text="✓ Configuración guardada correctamente.")
