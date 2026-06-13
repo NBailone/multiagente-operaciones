@@ -32,3 +32,26 @@ Thumbs.db
 
 
 ui_config.json
+
+# ── External binaries / runtimes ──────────────────────────
+python39/
+poppler/
+
+# ── OCR engines (downloaded binaries) ────────────────────
+engines/tesseract/
+engines/paddleocr/
+
+# ── Debug / temp ─────────────────────────────────────────
+debug_*.txt
+
+# ── External binaries / runtimes ──────────────────────────
+python39/
+poppler/
+
+# ── OCR engines (downloaded binaries) ────────────────────
+engines/tesseract/
+engines/paddleocr/
+
+# ── Debug / temp ─────────────────────────────────────────
+debug_*.txt
+Guardalo.

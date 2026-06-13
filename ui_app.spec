@@ -1,6 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec para ui_app.py
-# Incluye los dorsos PDF y el ícono embebidos en el ejecutable.
+# PyInstaller spec para Multiagente — MODO ONEFOLDER (portable)
 
 block_cipher = None
 
@@ -18,8 +17,12 @@ a = Analysis(
         # Módulos internos
         ('constants', 'constants'),
         ('utils', 'utils'),
-        # Config (si existe en dist)
+        # Config
         ('ui_config.json', '.'),
+        # Engines OCR (ocr_helper.py + tesseract)
+        ('engines', 'engines'),
+        # Poppler (pdf2image)
+        ('poppler', 'poppler'),
     ],
     hiddenimports=[
         'customtkinter',
@@ -33,6 +36,12 @@ a = Analysis(
         'email',
         'imaplib',
         'dotenv',
+        'pytesseract',
+        'pdf2image',
+        'PIL',
+        'cv2',
+        'numpy',
+        'fitz',
     ],
     hookspath=[],
     hooksconfig={},
@@ -60,8 +69,8 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,          # Sin ventana de consola
-    disable_windowed_traceback=False,
+    console=False,
+    disable_windowed_traceback=True,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
@@ -70,4 +79,16 @@ exe = EXE(
     version=None,
     uac_admin=False,
     uac_uiaccess=False,
+)
+
+# COLLECT: onefolder mode — datos al lado del exe
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='Multiagente',
 )
