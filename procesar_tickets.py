@@ -1394,14 +1394,18 @@ def cuil_a_dni(valor: str) -> str:
     return val
 
 
-def extraer_salida_aduana(pdf_path: str) -> dict:
+def extraer_salida_aduana(pdf_path: str, modo: str = "flexi") -> dict:
     """
-    Extrae datos de un PDF de Salida de Zona Primaria Aduanera (getjobid*.pdf).
+    Extrae datos de un PDF de Salida de Zona Primaria Aduanera (getjobid*.pdf o PLT*).
     Estos PDFs contienen texto (no son escaneados).
+
+    Args:
+        pdf_path: Ruta al PDF.
+        modo: "flexi" (ISO/Flexi con CUIL) o "terrestre" (carga a granel con DNI).
 
     Retorna dict con:
         plt, contenedor, patente_camion, patente_semi, conductor,
-        cuil, peso_bruto, id_destinacion, exportador
+        cuil/dni, peso_bruto, id_destinacion, exportador
     """
     import fitz
     doc = fitz.open(pdf_path)
@@ -1421,27 +1425,58 @@ def extraer_salida_aduana(pdf_path: str) -> dict:
     m = re.search(r"(PLT\d+)", text)
     data["plt"] = m.group(1) if m else ""
 
-    # Número de contenedor: 4 letras + 7 dígitos
-    m = re.search(r"\b([A-Z]{4}\d{7})\b", text)
-    data["contenedor"] = m.group(1) if m else ""
+    # Número de contenedor: 4 letras + 7 dígitos (solo flexi)
+    if modo == "flexi":
+        m = re.search(r"\b([A-Z]{4}\d{7})\b", text)
+        data["contenedor"] = m.group(1) if m else ""
+    else:
+        data["contenedor"] = ""
 
-    # Peso bruto: ej 23,525.000
-    m = re.search(r"([\d,]+\.\d{3})", text)
-    data["peso_bruto"] = m.group(1).replace(",", "") if m else ""
-
-    # CUIL: buscar "CUIL" seguido del número (misma línea o siguiente)
-    m = re.search(r"CUIL\s*(\d{11})", text)
+    # Peso bruto:
+    #   flexi: ej 23,525.000
+    #   terrestre: ej 27,890  o  27890  (después del Doc. Transporte/Manifiesto)
+    m = re.search(r"([\d,]+\.\d{3})", text)  # formato flexi
     if not m:
-        # Fallback: cualquier número de 11 dígitos
-        m = re.search(r"\b(\d{11})\b", text)
-    data["cuil"] = m.group(1) if m else ""
+        # terrestre: número después de referencia tipo 069AR00902026
+        m = re.search(r"\b(069[A-Z0-9]{8,})\s*\n\s*(\d{4,6})", text)
+        if m:
+            data["peso_bruto"] = m.group(2)
+        else:
+            # fallback general: último bloque numérico grande antes de nombre de empresa
+            m = re.search(r"\b(\d{4,6})\b\s*\n\s*(?:\d[\d,]*\s*\n\s*)?[A-ZÁÉÍÓÚÑÜ\s]{4,}(?:SA|SRL|LTDA)\b", text)
+            data["peso_bruto"] = m.group(1) if m else ""
+    else:
+        data["peso_bruto"] = m.group(1).replace(",", "") if m else ""
+
+    if modo == "terrestre":
+        # DNI: buscar label "DNI" seguido del número
+        m = re.search(r"\bDNI\s*\n?\s*(\d{7,8})", text)
+        data["cuil"] = m.group(1) if m else ""
+        # Conductor: línea antes de "DNI"
+        for i, line in enumerate(lines):
+            if line.strip() == "DNI" and i > 0:
+                data["conductor"] = lines[i - 1].strip()
+                break
+        else:
+            data["conductor"] = ""
+        # Exportador: línea antes del CUIT
+        m = re.search(r"PLT\d+\s*\n\s*(.+?)\s*\n\s*\d{9,11}", text)
+        data["exportador"] = m.group(1).strip() if m else ""
+    else:
+        # CUIL: buscar "CUIL" seguido del número (misma línea o siguiente)
+        m = re.search(r"CUIL\s*(\d{11})", text)
+        if not m:
+            # Fallback: cualquier número de 11 dígitos
+            m = re.search(r"\b(\d{11})\b", text)
+        data["cuil"] = m.group(1) if m else ""
+        # Exportador: línea antes del CUIT (9-11 dígitos)
+        m = re.search(r"PLT\d+\s*\n\s*(.+?)\s*\n\s*\d{9,11}", text)
+        data["exportador"] = m.group(1).strip() if m else ""
 
     # Precinto(s): extraer código(s) después de "Salida Reversada/Anulada"
-    # Pueden ser uno o varios, separados por espacio/guion o en líneas separadas
-    m = re.search(r"Salida Reversada/Anulada\s*\n(.+?)(?=\n\s*$|\nPEMA)", text, re.DOTALL)
+    m = re.search(r"Salida Reversada/Anulada\s*\n(.+?)(?=\n\s*$|\nPEMA|\n(?:A GRANEL|Tipo Embalaje|\d{3,4}\s*$))", text, re.DOTALL)
     if m:
         block = m.group(1).strip()
-        # Dividir por whitespace, newlines o guiones
         parts = re.split(r'[\s\n\-]+', block)
         codes = [p.upper() for p in parts if p.strip() and len(p.strip()) >= 6 and not p.strip().isdigit()]
         data["precinto"] = " ".join(sorted(set(codes)))
@@ -1452,12 +1487,10 @@ def extraer_salida_aduana(pdf_path: str) -> dict:
     m = re.search(r"EXPORTACION A CONSUMO\s*\n?\s*(\S+)", text)
     data["id_destinacion"] = m.group(1) if m else ""
 
-    # Exportador: línea antes del CUIT (9-11 dígitos)
-    m = re.search(r"PLT\d+\s*\n\s*(.+?)\s*\n\s*\d{9,11}", text)
-    data["exportador"] = m.group(1).strip() if m else ""
-
-    # Patentes: buscar patentes argentinas
-    patentes = re.findall(r"\b([A-Z]{2}\d{3}[A-Z]{2})\b", text)
+    # Patentes argentinas: formato nuevo (AA111AA) o viejo (AAA111)
+    pat_all = re.findall(r"\b(?:[A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{3}\d{3})\b", text)
+    # Filtrar falsos positivos como "PLT075"
+    patentes = [p for p in pat_all if not p.startswith("PLT")]
     if len(patentes) >= 2:
         data["patente_camion"] = patentes[0]
         data["patente_semi"] = patentes[1]
@@ -1468,14 +1501,101 @@ def extraer_salida_aduana(pdf_path: str) -> dict:
         data["patente_camion"] = ""
         data["patente_semi"] = ""
 
-    # Conductor: línea que contiene solo mayúsculas y espacios, entre patentes y CUIL/Linea_CUIL
-    # Buscar entre las últimas líneas: suele ser la línea antes de "CUIL"
-    for i, line in enumerate(lines):
-        if line.strip() == "CUIL" and i > 0:
-            data["conductor"] = lines[i - 1].strip()
-            break
+    # Conductor (fallback para flexi si no se encontró antes)
+    if modo == "flexi" and not data.get("conductor"):
+        for i, line in enumerate(lines):
+            if line.strip() == "CUIL" and i > 0:
+                data["conductor"] = lines[i - 1].strip()
+                break
+        else:
+            data["conductor"] = ""
+
+    return data
+
+
+def extraer_mic_dta(pdf_path: str) -> dict:
+    """
+    Extrae datos de un PDF de MIC/DTA (Manifiesto Internacional de Carga).
+    Estos PDFs contienen texto (no son escaneados).
+
+    Retorna dict con:
+        mic_numero, patente_camion, patente_semi, peso_bruto, precinto,
+        permiso_internacional, id_destinacion, exportador, destinatario
+    """
+    import fitz
+    doc = fitz.open(pdf_path)
+    text = ""
+    for page in doc:
+        text += page.get_text()
+    doc.close()
+
+    if not text.strip():
+        return {"_error": "El PDF de MIC/DTA no tiene texto"}
+
+    data = {}
+
+    # MIC/DTA number: código como 26AR243130A
+    m = re.search(r"(?:\d+\s*/\s*)?(\d{2}[A-Z]{2}\d{5,6}[A-Z]?)", text)
+    data["mic_numero"] = m.group(1) if m else ""
+
+    # Permiso Internacional: después de "Nro. Permiso. Internacional:" o "Permiso. Internacional:"
+    m = re.search(r"Permiso\.?\s*Internacional[:\s]*(\S+)", text, re.IGNORECASE)
+    data["permiso_internacional"] = m.group(1) if m else ""
+
+    # Patentes argentinas: formato nuevo (AA111AA) o viejo (AAA111)
+    pat_all = re.findall(r"\b(?:[A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{3}\d{3})\b", text)
+    # Filtrar falsos positivos
+    patentes = [p for p in pat_all if not p.startswith("PLT")]
+    if len(patentes) >= 2:
+        data["patente_camion"] = patentes[0]
+        data["patente_semi"] = patentes[1]
+    elif len(patentes) == 1:
+        data["patente_camion"] = patentes[0]
+        data["patente_semi"] = ""
     else:
-        data["conductor"] = ""
+        data["patente_camion"] = ""
+        data["patente_semi"] = ""
+
+    # Peso bruto / Cantidad de bultos: "Cantidad de bultos" o "Quantidade de volumes"
+    m = re.search(r"(?:Cantidad de bultos|Quantidade de volumes)\s*\n\s*(\d[\d.,]*)", text, re.IGNORECASE)
+    if not m:
+        # Fallback: buscar el número más grande después de "27890" u otro patrón
+        m = re.search(r"\b(\d{4,6})\b", text)
+    data["peso_bruto"] = m.group(1).replace(",", "").replace(".", "") if m else ""
+
+    # Precinto: "Numero de los precintos" — el valor suele estar 1-2 líneas después
+    m = re.search(r"(?:Numero de los precintos|Numero dos lacres)\s*(?:\n[^A-Z]*)?\s*\n\s*([A-Z0-9]{6,})", text, re.IGNORECASE | re.MULTILINE)
+    if m:
+        data["precinto"] = m.group(1).strip()
+    else:
+        data["precinto"] = ""
+
+    # Id Destinación: buscarlo en "Documentos Anexos" / "Documentos anexos"
+    m = re.search(r"Documentos\s+Anexos[^\n]*\n\s*Destinacion[:\s]*(\S+)", text, re.IGNORECASE)
+    if not m:
+        # Fallback: código tipo 26069EC01000398W en el texto
+        m = re.search(r"\b(\d{5}[A-Z]{2}\d{6}[A-Z])\b", text)
+    data["id_destinacion"] = m.group(1) if m else ""
+
+    # Exportador / Remitente: buscar línea después de "Remitente" o "Remetente"
+    # El texto tiene formato "33 Remitente\n/ Remetente\nNOMBRE\n"
+    m = re.search(r"(?:^|\n)\s*\d*\s*Remitente\s*\n\s*(?:/\s*Remetente\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"(?:^|\n)\s*\d*\s*Remetente\s*\n\s*(?:/\s*Remitente\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
+    data["exportador"] = m.group(1).strip() if m else ""
+
+    # Destinatario: buscar línea después de "Destinatario" o "Consignatario"
+    m = re.search(r"(?:^|\n)\s*\d*\s*Destinatario\s*\n\s*(?:/\s*\w+\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"(?:^|\n)\s*\d*\s*Consignatario\s*\n\s*(?:/\s*\w+\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
+    data["destinatario"] = m.group(1).strip() if m else ""
+
+    # N° Carta de Porte / Conocimiento
+    # El valor suele estar 2 líneas después del label
+    m = re.search(r"(?:N[°º]\s*(?:carta de porte|conhecimiento)|Doc\.?\s*Transporte)\s*\n[^\n]*\n\s*(\S+)", text, re.IGNORECASE)
+    if not m:
+        m = re.search(r"\b(069[A-Z]{2}\d{6,})\b", text)
+    data["n_carta_porte"] = m.group(1) if m else ""
 
     return data
 
@@ -1535,7 +1655,10 @@ def api_vision_extraer_datos(ruta_pdf: str, api_key: str,
 }
 
 Instrucciones por campo:
-- "Patente": buscar la etiqueta "Patente" o "Camión"
+- "Patente": buscar la etiqueta "Patente" o "Camión". Las patentes argentinas usan:
+  - Formato NUEVO (Mercosur): AB123CD (2 letras + 3 números + 2 letras)
+  - Formato VIEJO: ABC123 (3 letras + 3 números)
+  - IMPORTANTE: no confundas la letra O (oh) con el número 0 (cero). Si una patente nueva termina con letras pero ves un número donde va una letra (ej: "AF1910A" → es "AF191OA"), usá la interpretación que cumple el formato correcto de patente argentina.
 - "Semirremolque": buscar "Acoplado" o "Semirremolque"
 - "Conductor": buscar "Conductor" o "Chofer"
 - "DNI": solo números, buscar "DNI" o "Documento"

@@ -7653,8 +7653,11 @@ class App(ctk.CTk):
         try:
             result_count = 0
             # 1. Clasificar PDFs
-            tickets_pdf = []  # scanned, need OCR
-            aduanas_data = []  # already have text
+            tickets_pdf = []   # scanned, need OCR
+            aduanas_data = []  # PLT / Salida Aduana (texto)
+            mic_data = []      # MIC/DTA (texto)
+            modo = "flexi"     # por defecto
+
             for ruta in pdf_paths:
                 import fitz
                 doc = fitz.open(ruta)
@@ -7662,17 +7665,30 @@ class App(ctk.CTk):
                 for p in doc:
                     text += p.get_text()
                 doc.close()
-                if text.strip() and "SALIDA DE ZONA PRIMARIA" in text.upper():
-                    # Aduana PDF
-                    data = procesar_tickets.extraer_salida_aduana(ruta)
+
+                if not text.strip():
+                    tickets_pdf.append(ruta)
+                    continue
+
+                if "MIC/DTA" in text.upper() or "MANIFIESTO INTERNACIONAL DE CARGA" in text.upper():
+                    # MIC/DTA → activa modo terrestre
+                    md = procesar_tickets.extraer_mic_dta(ruta)
+                    if "_error" not in md:
+                        md["_archivo"] = os.path.basename(ruta)
+                        mic_data.append(md)
+                    modo = "terrestre"
+                elif "SALIDA DE ZONA PRIMARIA" in text.upper():
+                    # PLT Aduana
+                    data = procesar_tickets.extraer_salida_aduana(ruta, modo=modo)
                     data["_archivo"] = os.path.basename(ruta)
                     aduanas_data.append(data)
                 else:
                     tickets_pdf.append(ruta)
 
-            self._log(f"[Control Final] {len(tickets_pdf)} tickets, {len(aduanas_data)} aduanas")
+            self._log(f"[Control Final] modo={modo}, {len(tickets_pdf)} tickets, "
+                      f"{len(aduanas_data)} aduanas, {len(mic_data)} mic/dta")
 
-            # 2. OCR tickets (same as Controlar Tickets)
+            # 2. OCR tickets
             self._contenedores_cache = {}
             self._cargar_cache_contenedores(excel_paths)
 
@@ -7700,116 +7716,282 @@ class App(ctk.CTk):
             else:
                 textos_por_pdf = procesar_tickets.pdfs_a_texto_batch(tickets_pdf, engine="paddleocr")
 
-            # 3. Process each ticket
+            # 3. Build lookup structures
             self._log(f"[Control Final] Procesando tickets...")
 
-            # Build aduana lookup by contenedor + precinto
-            aduana_por_contenedor = {}
-            aduana_por_precinto = {}
-            for ad in aduanas_data:
-                if ad.get("contenedor"):
-                    aduana_por_contenedor[ad["contenedor"].upper()] = ad
-                if ad.get("precinto"):
-                    # Multi-precinto: un entry por cada código
-                    for p in ad["precinto"].upper().split():
-                        p = p.strip()
-                        if p:
-                            aduana_por_precinto[p] = ad
+            if modo == "terrestre":
+                # ── Terrestre: match por patente → precinto → DNI ──
+                import re as _re
 
-            todos_pdfs = set(tickets_pdf)
-            for ruta in todos_pdfs:
-                stem = os.path.basename(ruta)
-                try:
-                    if stem in api_datos_raw:
-                        raw = api_datos_raw[stem]
-                        ticket_data = {
-                            "archivo":   stem,
-                            "Patente":   raw.get("Patente", ""),
-                            "Semirremolque": raw.get("Semirremolque", ""),
-                            "Conductor": raw.get("Conductor", ""),
-                            "DNI":       raw.get("DNI", ""),
-                            "Neto":      raw.get("Neto", ""),
-                            "Tara Contenedor": raw.get("Tara Contenedor", ""),
-                            "Contenedor": raw.get("Contenedor", ""),
-                            "Permiso":   raw.get("Permiso", ""),
-                        }
-                    else:
-                        texto = textos_por_pdf.get(stem, "")
-                        if not texto:
-                            continue
-                        extraido = procesar_tickets.extraer_datos(texto)
-                        ticket_data = {
-                            "archivo":   stem,
-                            "Patente":   extraido.get("patente", ""),
-                            "Semirremolque": extraido.get("semi", ""),
-                            "Conductor": extraido.get("conductor", ""),
-                            "DNI":       extraido.get("dni", ""),
-                            "Neto":      extraido.get("neto", ""),
-                            "Tara Contenedor": extraido.get("tara", ""),
-                            "Contenedor": extraido.get("contenedor", ""),
-                            "Permiso":   extraido.get("oferta", ""),
-                        }
+                def _norm_pat_match(s):
+                    """Normalizar patente: sacar espacios, uppercase."""
+                    if not s: return ""
+                    return _re.sub(r'\s+', '', s).upper()
 
-                    # Match contenedor (normalizar espacios/guiones)
-                    contenedor_num = ticket_data.get("Contenedor", "").upper().strip()
-                    import re as _re
-                    contenedor_num_norm = _re.sub(r'[\s\-]+', '', contenedor_num)
-                    self._log(f"  {stem}: contenedor='{contenedor_num}' (norm='{contenedor_num_norm}')")
+                # ── Build lookup structures ──
+                aduana_por_patente = {}
+                aduana_por_precinto = {}
+                aduana_por_dni = {}
+                for ad in aduanas_data:
+                    pat = _norm_pat_match(ad.get("patente_camion", ""))
+                    if pat: aduana_por_patente[pat] = ad
+                    if ad.get("precinto"):
+                        for p in ad["precinto"].upper().split():
+                            p = p.strip()
+                            if p: aduana_por_precinto[p] = ad
+                    dni = _re.sub(r'\D', '', ad.get("cuil", ""))
+                    if dni: aduana_por_dni[dni] = ad
 
-                    # Match Excel contenedores
-                    cont_data = None
-                    cont_idx = -1
-                    for k, v in self._contenedores_cache.items():
-                        camiones = v.get("camiones", [])
-                        for ci, cam in enumerate(camiones):
-                            c_raw = cam.get("contenedor", "").upper().strip()
-                            c_norm = _re.sub(r'[\s\-]+', '', c_raw)
-                            if c_norm and c_norm == contenedor_num_norm:
-                                cont_data = v
-                                cont_idx = ci
-                                break
-                        if cont_data:
-                            break
+                # Excel lookups
+                excel_por_patente = {}
+                excel_por_precinto = {}
+                excel_por_dni = {}
+                for k, v in self._contenedores_cache.items():
+                    camiones = v.get("camiones", [])
+                    for ci, cam in enumerate(camiones):
+                        pat = _norm_pat_match(cam.get("patente_camion", ""))
+                        if pat: excel_por_patente[pat] = (v, ci)
+                        prec = cam.get("precinto", "").upper().strip()
+                        if prec: excel_por_precinto[prec] = (v, ci)
+                        dni = _re.sub(r'\D', '', str(cam.get("dni", "")))
+                        if dni: excel_por_dni[dni] = (v, ci)
 
-                    # Match Aduana by contenedor (usar versión normalizada sin guiones/espacios)
-                    aduana = aduana_por_contenedor.get(contenedor_num_norm, {})
-
-                    # Fallback por precinto: buscar cont_data + aduana cuando contenedor no matchea
-                    if not cont_data or not aduana:
-                        precinto_excel = ""
-                        if cont_data and cont_idx >= 0:
-                            # Ya tenemos Excel, usar su precinto para encontrar aduana
-                            cam = cont_data.get("camiones", [])
-                            if cont_idx < len(cam):
-                                precinto_excel = cam[cont_idx].get("precinto", "").upper().strip()
+                todos_pdfs = set(tickets_pdf)
+                for ruta in todos_pdfs:
+                    stem = os.path.basename(ruta)
+                    try:
+                        if stem in api_datos_raw:
+                            raw = api_datos_raw[stem]
+                            ticket_data = {
+                                "archivo":   stem,
+                                "Patente":   raw.get("Patente", ""),
+                                "Semirremolque": raw.get("Semirremolque", ""),
+                                "Conductor": raw.get("Conductor", ""),
+                                "DNI":       raw.get("DNI", ""),
+                                "Neto":      raw.get("Neto", ""),
+                                "Tara Contenedor": raw.get("Tara Contenedor", ""),
+                                "Contenedor": raw.get("Contenedor", ""),
+                                "Permiso":   raw.get("Permiso", ""),
+                            }
                         else:
-                            # No hay Excel match: escanear todos los camiones por precinto
-                            for k, v in self._contenedores_cache.items():
-                                for ci, cam in enumerate(v.get("camiones", [])):
-                                    p = cam.get("precinto", "").upper().strip()
-                                    if p and p in aduana_por_precinto:
-                                        cont_data = v
-                                        cont_idx = ci
-                                        precinto_excel = p
-                                        self._log(f"  ⚠ Fallback precinto: {stem} — Excel camión {ci} precinto={p}")
+                            texto = textos_por_pdf.get(stem, "")
+                            if not texto:
+                                continue
+                            extraido = procesar_tickets.extraer_datos(texto)
+                            ticket_data = {
+                                "archivo":   stem,
+                                "Patente":   extraido.get("patente", ""),
+                                "Semirremolque": extraido.get("semi", ""),
+                                "Conductor": extraido.get("conductor", ""),
+                                "DNI":       extraido.get("dni", ""),
+                                "Neto":      extraido.get("neto", ""),
+                                "Tara Contenedor": extraido.get("tara", ""),
+                                "Contenedor": extraido.get("contenedor", ""),
+                                "Permiso":   extraido.get("oferta", ""),
+                            }
+
+                        patente_ticket = _norm_pat_match(ticket_data.get("Patente", ""))
+                        dni_ticket = _re.sub(r'\D', '', ticket_data.get("DNI", ""))
+
+                        # ── Paso 1: Match por patente ──
+                        cont_data, cont_idx = excel_por_patente.get(patente_ticket, (None, -1))
+                        aduana = aduana_por_patente.get(patente_ticket, {})
+
+                        # Si no hay match directo, probar variantes O/0 en patente
+                        if not cont_data and not aduana:
+                            # Generar variantes: O⇄0 en nuevas patentes Mercosur (AB123CD)
+                            for i, ch in enumerate(patente_ticket):
+                                variants = set()
+                                if ch == 'O': variants.add(patente_ticket[:i] + '0' + patente_ticket[i+1:])
+                                if ch == '0': variants.add(patente_ticket[:i] + 'O' + patente_ticket[i+1:])
+                                if ch == 'I': variants.add(patente_ticket[:i] + '1' + patente_ticket[i+1:])
+                                if ch == '1': variants.add(patente_ticket[:i] + 'I' + patente_ticket[i+1:])
+                                if ch == 'S': variants.add(patente_ticket[:i] + '5' + patente_ticket[i+1:])
+                                if ch == '5': variants.add(patente_ticket[:i] + 'S' + patente_ticket[i+1:])
+                                for v in variants:
+                                    if not cont_data and v in excel_por_patente:
+                                        cont_data, cont_idx = excel_por_patente[v]
+                                        self._log(f"  ⚠ Patente OCR corregida: {patente_ticket}→{v} (Excel)")
+                                    if not aduana and v in aduana_por_patente:
+                                        aduana = aduana_por_patente[v]
+                                        self._log(f"  ⚠ Patente OCR corregida: {patente_ticket}→{v} (Aduana)")
+                                    if cont_data and aduana: break
+                                if cont_data and aduana: break
+
+                        # ── Paso 2: Fallback por precinto ──
+                        if not cont_data or not aduana:
+                            # 2a: Tenemos Excel pero falta Aduana
+                            if cont_data and cont_idx >= 0 and not aduana:
+                                cam = cont_data["camiones"][cont_idx]
+                                prec = cam.get("precinto", "").upper().strip()
+                                if prec and prec in aduana_por_precinto:
+                                    aduana = aduana_por_precinto[prec]
+                                    self._log(f"  ⚠ Aduana x precinto Excel: {stem} — precinto={prec}")
+
+                            # 2b: Tenemos Aduana pero falta Excel
+                            if aduana and (not cont_data or cont_idx < 0):
+                                prec = aduana.get("precinto", "").upper().strip()
+                                for p in prec.split():
+                                    if p in excel_por_precinto:
+                                        cont_data, cont_idx = excel_por_precinto[p]
+                                        self._log(f"  ⚠ Excel x precinto Aduana: {stem} — precinto={p}")
                                         break
-                                if cont_data:
+
+                            # 2c: Sin patente match: DNI primero (único, no cruza)
+                            if not cont_data and not aduana and dni_ticket:
+                                if dni_ticket in excel_por_dni:
+                                    cont_data, cont_idx = excel_por_dni[dni_ticket]
+                                    self._log(f"  ⚠ Excel x DNI: {stem} — dni={dni_ticket}")
+                                if dni_ticket in aduana_por_dni:
+                                    aduana = aduana_por_dni[dni_ticket]
+                                    self._log(f"  ⚠ Aduana x DNI: {stem} — dni={dni_ticket}")
+
+                            # 2d: Después de DNI, puentear lo que falte
+                            if not cont_data or not aduana:
+                                if cont_data and cont_idx >= 0 and not aduana:
+                                    cam = cont_data["camiones"][cont_idx]
+                                    prec = cam.get("precinto", "").upper().strip()
+                                    if prec and prec in aduana_por_precinto:
+                                        aduana = aduana_por_precinto[prec]
+                                        self._log(f"  ⚠ Aduana x precinto post-DNI: {stem} — precinto={prec}")
+                                if aduana and (not cont_data or cont_idx < 0):
+                                    prec = aduana.get("precinto", "").upper().strip()
+                                    for p in prec.split():
+                                        if p in excel_por_precinto:
+                                            cont_data, cont_idx = excel_por_precinto[p]
+                                            self._log(f"  ⚠ Excel x precinto post-DNI: {stem} — precinto={p}")
+                                            break
+
+                            # 2e: Sin ningún match, escanear todo por precinto
+                            if not cont_data and not aduana:
+                                for ad in aduanas_data:
+                                    prec = ad.get("precinto", "").upper().strip()
+                                    for p in prec.split():
+                                        if p in excel_por_precinto:
+                                            cont_data, cont_idx = excel_por_precinto[p]
+                                            aduana = ad
+                                            self._log(f"  ⚠ Sin match x precinto (último): {stem} — precinto={p}")
+                                            break
+                                    if cont_data: break
+
+                        result = self._build_fila_control_final(
+                            ticket_data, cont_data, cont_idx, aduana, stem, modo=modo
+                        )
+                        if result:
+                            self.log_queue.put(("_CONTROL_FINAL_RESULT_", result))
+                            result_count += 1
+
+                    except Exception as e:
+                        self._log(f"  ✗ Error {stem}: {e}")
+                        import traceback
+                        self._log(traceback.format_exc())
+
+            else:
+                # ── Flexi/ISO: match por contenedor (comportamiento actual) ──
+                aduana_por_contenedor = {}
+                aduana_por_precinto = {}
+                for ad in aduanas_data:
+                    if ad.get("contenedor"):
+                        aduana_por_contenedor[ad["contenedor"].upper()] = ad
+                    if ad.get("precinto"):
+                        for p in ad["precinto"].upper().split():
+                            p = p.strip()
+                            if p:
+                                aduana_por_precinto[p] = ad
+
+                todos_pdfs = set(tickets_pdf)
+                for ruta in todos_pdfs:
+                    stem = os.path.basename(ruta)
+                    try:
+                        if stem in api_datos_raw:
+                            raw = api_datos_raw[stem]
+                            ticket_data = {
+                                "archivo":   stem,
+                                "Patente":   raw.get("Patente", ""),
+                                "Semirremolque": raw.get("Semirremolque", ""),
+                                "Conductor": raw.get("Conductor", ""),
+                                "DNI":       raw.get("DNI", ""),
+                                "Neto":      raw.get("Neto", ""),
+                                "Tara Contenedor": raw.get("Tara Contenedor", ""),
+                                "Contenedor": raw.get("Contenedor", ""),
+                                "Permiso":   raw.get("Permiso", ""),
+                            }
+                        else:
+                            texto = textos_por_pdf.get(stem, "")
+                            if not texto:
+                                continue
+                            extraido = procesar_tickets.extraer_datos(texto)
+                            ticket_data = {
+                                "archivo":   stem,
+                                "Patente":   extraido.get("patente", ""),
+                                "Semirremolque": extraido.get("semi", ""),
+                                "Conductor": extraido.get("conductor", ""),
+                                "DNI":       extraido.get("dni", ""),
+                                "Neto":      extraido.get("neto", ""),
+                                "Tara Contenedor": extraido.get("tara", ""),
+                                "Contenedor": extraido.get("contenedor", ""),
+                                "Permiso":   extraido.get("oferta", ""),
+                            }
+
+                        # Match contenedor (normalizar espacios/guiones)
+                        contenedor_num = ticket_data.get("Contenedor", "").upper().strip()
+                        import re as _re
+                        contenedor_num_norm = _re.sub(r'[\s\-]+', '', contenedor_num)
+                        self._log(f"  {stem}: contenedor='{contenedor_num}' (norm='{contenedor_num_norm}')")
+
+                        # Match Excel contenedores
+                        cont_data = None
+                        cont_idx = -1
+                        for k, v in self._contenedores_cache.items():
+                            camiones = v.get("camiones", [])
+                            for ci, cam in enumerate(camiones):
+                                c_raw = cam.get("contenedor", "").upper().strip()
+                                c_norm = _re.sub(r'[\s\-]+', '', c_raw)
+                                if c_norm and c_norm == contenedor_num_norm:
+                                    cont_data = v
+                                    cont_idx = ci
                                     break
-                        if precinto_excel and precinto_excel in aduana_por_precinto:
-                            if not aduana:
-                                aduana = aduana_por_precinto[precinto_excel]
-                                self._log(f"  ⚠ Aduana encontrada por precinto: {precinto_excel}")
+                            if cont_data:
+                                break
 
-                    # Build row and comparison data
-                    result = self._build_fila_control_final(ticket_data, cont_data, cont_idx, aduana, stem)
-                    if result:
-                        self.log_queue.put(("_CONTROL_FINAL_RESULT_", result))
-                        result_count += 1
+                        # Match Aduana by contenedor
+                        aduana = aduana_por_contenedor.get(contenedor_num_norm, {})
 
-                except Exception as e:
-                    self._log(f"  ✗ Error {stem}: {e}")
-                    import traceback
-                    self._log(traceback.format_exc())
+                        # Fallback por precinto
+                        if not cont_data or not aduana:
+                            precinto_excel = ""
+                            if cont_data and cont_idx >= 0:
+                                cam = cont_data.get("camiones", [])
+                                if cont_idx < len(cam):
+                                    precinto_excel = cam[cont_idx].get("precinto", "").upper().strip()
+                            else:
+                                for k, v in self._contenedores_cache.items():
+                                    for ci, cam in enumerate(v.get("camiones", [])):
+                                        p = cam.get("precinto", "").upper().strip()
+                                        if p and p in aduana_por_precinto:
+                                            cont_data = v
+                                            cont_idx = ci
+                                            precinto_excel = p
+                                            self._log(f"  ⚠ Fallback precinto: {stem} — Excel camión {ci} precinto={p}")
+                                            break
+                                    if cont_data:
+                                        break
+                            if precinto_excel and precinto_excel in aduana_por_precinto:
+                                if not aduana:
+                                    aduana = aduana_por_precinto[precinto_excel]
+                                    self._log(f"  ⚠ Aduana encontrada por precinto: {precinto_excel}")
+
+                        result = self._build_fila_control_final(
+                            ticket_data, cont_data, cont_idx, aduana, stem, modo=modo
+                        )
+                        if result:
+                            self.log_queue.put(("_CONTROL_FINAL_RESULT_", result))
+                            result_count += 1
+
+                    except Exception as e:
+                        self._log(f"  ✗ Error {stem}: {e}")
+                        import traceback
+                        self._log(traceback.format_exc())
 
         except Exception as e:
             self._log(f"[Control Final] Error general: {e}")
@@ -7821,8 +8003,12 @@ class App(ctk.CTk):
             self._log(f"[Control Final] Finalizado — {rc} ticket(s) procesado(s)")
             self.log_queue.put(("_TAREA_COMPLETA_", None))
 
-    def _build_fila_control_final(self, ticket_data, cont_data, cont_idx, aduana, stem):
+    def _build_fila_control_final(self, ticket_data, cont_data, cont_idx, aduana, stem,
+                                   modo="flexi"):
         """Build row values and comparison data for Control Final.
+
+        Args:
+            modo: "flexi" (ISO/Flexi containers) or "terrestre" (bulk/granel).
 
         Returns dict with keys:
           valores    → tuple for tree row (11 cols)
@@ -7831,6 +8017,7 @@ class App(ctk.CTk):
           contenedor → dict {Patente, Semirremolque, ..., Permiso} (normalized Excel)
           aduana     → dict {Patente Camión, ..., CUIL, Contenedor, ...}
           ok         → dict per field: True if ticket matches reference
+          modo       → the mode used
         """
         import procesar_tickets
         import re as _re
@@ -7848,11 +8035,33 @@ class App(ctk.CTk):
             v = v.replace(".", "")             # "23.440" → "23440"
             return v
 
+        def _fmt_neto(s):
+            """Normalize number then format with dot as thousands separator: '27890' → '27.890'."""
+            if not s:
+                return s
+            v = str(s).strip()
+            # Quitar comas y puntos existentes
+            v = v.replace(",", "")
+            v = _re.sub(r'\.0+$', '', v)
+            v = v.replace(".", "")
+            if v.isdigit():
+                return f"{int(v):,}".replace(",", ".")
+            return v
+
         def _norm_ctn(s):
             """Remove spaces and dashes from contenedor numbers."""
             if not s:
                 return s
             return _re.sub(r'[\s\-]+', '', str(s).strip())
+
+        def _dni_solo(v):
+            """Extraer solo DNI, limpiando CUIL/CUIT y no-dígitos."""
+            if not v:
+                return ""
+            d = _re.sub(r'\D', '', v)
+            if len(d) == 11 and d[:2] in ("20", "23", "27", "30"):
+                return d[2:-1]
+            return d
 
         # ── Ticket data (ORIGINAL, never overwrite) ──
         t_patente    = ticket_data.get("Patente", "")
@@ -7863,6 +8072,7 @@ class App(ctk.CTk):
         t_tara       = ticket_data.get("Tara Contenedor", "")
         t_contenedor = ticket_data.get("Contenedor", "")
         t_permiso    = ticket_data.get("Permiso", "")
+        t_dni        = _dni_solo(t_dni)
 
         # ── Aduana data ──
         a_plt            = aduana.get("plt", "")
@@ -7875,7 +8085,8 @@ class App(ctk.CTk):
         a_exportador     = aduana.get("exportador", "")
         a_contenedor     = aduana.get("contenedor", "")
         a_precinto       = aduana.get("precinto", "")
-        a_dni = procesar_tickets.cuil_a_dni(a_cuil) if a_cuil else ""
+
+        a_dni = _dni_solo(a_cuil)
 
         # ── Excel / Contenedor data ──
         e_patente = ""
@@ -7901,18 +8112,17 @@ class App(ctk.CTk):
                 e_precinto   = cam.get("precinto", "")
                 e_permiso    = cont_data.get("pe", "")
                 e_peso_flexi = str(cam.get("peso_flexi", "0"))
+        e_dni = _dni_solo(e_dni)
 
         # ── Normalize all values ──
         t_patente    = _norm_pat(t_patente)
         t_semi       = _norm_pat(t_semi)
         t_neto       = _norm_num(t_neto)
-        t_tara       = _norm_num(t_tara)
         t_contenedor = _norm_ctn(t_contenedor)
 
         e_patente    = _norm_pat(e_patente)
         e_semi       = _norm_pat(e_semi)
         e_neto       = _norm_num(e_neto)
-        e_tara       = _norm_num(e_tara)
         e_contenedor = _norm_ctn(e_contenedor)
 
         a_patente_camion = _norm_pat(a_patente_camion)
@@ -7920,17 +8130,36 @@ class App(ctk.CTk):
         a_peso_bruto     = _norm_num(a_peso_bruto)
         a_contenedor     = _norm_ctn(a_contenedor)
 
-        # ── Calculate aduana neto = peso_bruto - flexi ──
-        a_neto_calc = a_peso_bruto
-        if a_peso_bruto:
-            try:
-                pb = float(a_peso_bruto.replace(",", ""))
-                # Prefer global flexi (label-based) over per-camion
-                pf_val = (cont_data.get("peso_flexi_global") if cont_data else None) or e_peso_flexi
-                pf = float(pf_val) if pf_val and pf_val != "0" else 0
-                a_neto_calc = str(int(pb - pf)) if pf > 0 else str(int(pb))
-            except (ValueError, TypeError):
-                pass
+        # ── Calculate aduana neto (solo flexi: peso_bruto - flexi) ──
+        if modo == "terrestre":
+            a_neto_calc = a_peso_bruto
+        else:
+            a_neto_calc = a_peso_bruto
+            if a_peso_bruto:
+                try:
+                    pb = float(a_peso_bruto.replace(",", ""))
+                    pf_val = (cont_data.get("peso_flexi_global") if cont_data else None) or e_peso_flexi
+                    pf = float(pf_val) if pf_val and pf_val != "0" else 0
+                    a_neto_calc = str(int(pb - pf)) if pf > 0 else str(int(pb))
+                except (ValueError, TypeError):
+                    pass
+
+        # ── Apply terrestre field overrides ──
+        if modo == "terrestre":
+            t_tara = "—"
+            t_contenedor = "—"
+            e_tara = "—"
+            e_contenedor = "—"
+            if not a_contenedor:
+                a_contenedor = "—"
+
+        # ── Format neto/tara with dot thousands separator ──
+        t_neto       = _fmt_neto(t_neto)
+        e_neto       = _fmt_neto(e_neto)
+        a_neto_calc  = _fmt_neto(a_neto_calc)
+        t_tara       = _fmt_neto(t_tara)
+        e_tara       = _fmt_neto(e_tara)
+        # No format a_peso_bruto display — a_neto_calc is used for comparison
 
         # ── Build display dicts (all normalized) ──
         ticket_d = {
@@ -7947,6 +8176,7 @@ class App(ctk.CTk):
             "Contenedor": e_contenedor, "Permiso": e_permiso,
             "Precinto": e_precinto,
         }
+        dni_key = "DNI" if modo == "terrestre" else "CUIL"
         aduana_d = {
             "PLT": a_plt,
             "Peso Bruto Aduana": a_neto_calc,
@@ -7955,7 +8185,7 @@ class App(ctk.CTk):
             "Patente Camión": a_patente_camion,
             "Patente Semi": a_patente_semi,
             "Conductor Aduana": a_conductor,
-            "CUIL": a_dni,
+            dni_key: a_dni,
             "Contenedor": a_contenedor,
             "Precinto": a_precinto,
         }
@@ -8005,12 +8235,22 @@ class App(ctk.CTk):
                     all_ok = False
                 continue  # skip the generic comparison below
 
+            # Normalize DNI: strip non-digits for comparison
+            if campo == "DNI":
+                v_ticket   = _re.sub(r'\D', '', v_ticket)
+                v_cont     = _re.sub(r'\D', '', v_cont)
+                aduana_val = _re.sub(r'\D', '', aduana_val)
+
             # Collect non-empty values from all 3 sources
             vals = set()
             # Precinto: ticket siempre "-", no comparar
             if campo == "Precinto":
                 if v_cont:     vals.add(v_cont)
                 if aduana_val: vals.add(aduana_val)
+            elif campo == "Tara (kg)":
+                # Tara: solo Ticket vs Excel (Aduana no tiene tara)
+                if v_ticket:   vals.add(v_ticket)
+                if v_cont:     vals.add(v_cont)
             else:
                 if v_ticket:   vals.add(v_ticket)
                 if v_cont:     vals.add(v_cont)
@@ -8020,11 +8260,11 @@ class App(ctk.CTk):
             if len(vals) <= 1:
                 ok_map[campo] = True
             else:
-                # Para Precinto: si hay multi-precinto (varios códigos), verificar solapamiento
+                # Para Precinto: si hay multi-precinto, verificar solapamiento
                 if campo == "Precinto" and len(vals) > 1:
                     cont_codes = set(v_cont.split()) if v_cont else set()
                     adu_codes = set(aduana_val.split()) if aduana_val else set()
-                    if cont_codes & adu_codes:  # al menos un código en común
+                    if cont_codes & adu_codes:
                         ok_map[campo] = True
                     else:
                         ok_map[campo] = False
@@ -8059,6 +8299,7 @@ class App(ctk.CTk):
             "contenedor": cont_d,
             "aduana": aduana_d,
             "ok": ok_map,
+            "modo": modo,
         }
 
     def _procesar_resultado_control_final(self, data):
@@ -8075,6 +8316,7 @@ class App(ctk.CTk):
                 "contenedor": data["contenedor"],
                 "ok": data["ok"],
                 "aduana": data["aduana"],
+                "modo": data.get("modo", "flexi"),
             }
         except Exception as e:
             self._log(f"Error insertando fila: {e}")
@@ -8088,6 +8330,9 @@ class App(ctk.CTk):
         datos = self._control_final_comparacion.get(sel[0])
         if not datos:
             return
+
+        modo = datos.get("modo", "flexi")
+        aduana_header = "PLT Aduana + MIC/DTA" if modo == "terrestre" else "Salida Aduana"
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("Comparación — Control Final")
@@ -8107,27 +8352,45 @@ class App(ctk.CTk):
         header.pack_propagate(False)
 
         widths = [100, 160, 160, 160]
-        for col_i, txt in enumerate(["Campo", "Ticket (OCR)", "Salida Aduana", "Contenedor (Excel)"]):
-            ctk.CTkLabel(
+        for col_i, txt in enumerate(["Campo", "Ticket (OCR)", aduana_header, "Contenedor (Excel)"]):
+            lbl = ctk.CTkLabel(
                 header, text=txt, width=widths[col_i] if col_i > 0 else 100,
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
                 text_color=Palette.TEXT_SECONDARY,
-            ).pack(side="left", padx=(8, 0))
+            )
+            kwargs = {"side": "left", "padx": (8, 0)}
+            if col_i > 0:
+                kwargs["fill"] = "x"
+                kwargs["expand"] = True
+            lbl.pack(**kwargs)
 
         scroll = ctk.CTkScrollableFrame(dlg, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=12, pady=8)
 
-        campos = [
-            ("Patente", "Patente", "Patente Camión"),
-            ("Semirremolque", "Semirremolque", "Patente Semi"),
-            ("Conductor", "Conductor", "Conductor Aduana"),
-            ("DNI", "DNI", "CUIL"),
-            ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
-            ("Tara (kg)", "Tara (kg)", None),
-            ("Contenedor", "Contenedor", "Contenedor"),
-            ("Permiso", "Permiso", "Id Destinación"),
-            ("Precinto", "Precinto", "Precinto"),
-        ]
+        if modo == "terrestre":
+            campos = [
+                ("Patente", "Patente", "Patente Camión"),
+                ("Semirremolque", "Semirremolque", "Patente Semi"),
+                ("Conductor", "Conductor", "Conductor Aduana"),
+                ("DNI", "DNI", "DNI"),
+                ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
+                ("Tara (kg)", "Tara (kg)", None),
+                ("Contenedor", "Contenedor", "Contenedor"),
+                ("Permiso", "Permiso", "Id Destinación"),
+                ("Precinto", "Precinto", "Precinto"),
+            ]
+        else:
+            campos = [
+                ("Patente", "Patente", "Patente Camión"),
+                ("Semirremolque", "Semirremolque", "Patente Semi"),
+                ("Conductor", "Conductor", "Conductor Aduana"),
+                ("DNI", "DNI", "CUIL"),
+                ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
+                ("Tara (kg)", "Tara (kg)", None),
+                ("Contenedor", "Contenedor", "Contenedor"),
+                ("Permiso", "Permiso", "Id Destinación"),
+                ("Precinto", "Precinto", "Precinto"),
+            ]
 
         # Campos con coloreado individual por celda (mayoría decide)
         campos_mayoria = {"Patente", "Semirremolque", "DNI",
