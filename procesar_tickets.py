@@ -55,11 +55,22 @@ def _resource_dir():
 _app_base = _app_dir()
 _res_base = _resource_dir()
 
+# --- Resolver python39 (sidecar al lado del exe o bundleado en _internal/) ---
+_python39_paths = [
+    os.path.join(_app_base, "python39", "python.exe"),              # sidecar legacy al lado del exe
+]
+if getattr(sys, 'frozen', False):
+    _python39_paths.extend([
+        os.path.join(_res_base, "python39", "python.exe"),          # subdirectorio python39/ en _internal/
+        os.path.join(_res_base, "python.exe"),                      # expandido directo en _internal/ (destino '.')
+    ])
+_python39_resolved = next((p for p in _python39_paths if os.path.isfile(p)), None)
+
 # Debug: log de rutas al cargar el módulo
 _debug_ok = True
 _debug_msgs = []
 for _name, _path in [
-    ("python39/python.exe", os.path.join(_app_base, "python39", "python.exe")),
+    ("python39/python.exe", _python39_resolved or _python39_paths[0]),
     ("engines/paddleocr/ocr_helper.py", os.path.join(_res_base, "engines", "paddleocr", "ocr_helper.py")),
     ("poppler/pdftoppm.exe", os.path.join(_res_base, "poppler", "Library", "bin", "pdftoppm.exe")),
 ]:
@@ -84,7 +95,7 @@ pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 OCR_ENGINE_DEFAULT = "paddleocr"
 TESSERACT_SIDECAR = os.path.join(_res_base, "engines", "tesseract")
 PADDLE_SIDECAR = os.path.join(_res_base, "engines", "paddleocr")
-PADDLE_PORTABLE_PYTHON = os.path.join(_app_base, "python39", "python.exe")
+PADDLE_PORTABLE_PYTHON = _python39_resolved or os.path.join(_app_base, "python39", "python.exe")
 PADDLE_OCR_HELPER = os.path.join(PADDLE_SIDECAR, "ocr_helper.py")
 
 # --- Sidecar detection for Tesseract ---

@@ -14,12 +14,11 @@ a = Analysis(
         ('dorso PE.pdf', '.'),
         # Ícono
         ('icono.ico', '.'),
+        # Config
+        ('ui_config.json', '.'),
         # Módulos internos
         ('constants', 'constants'),
         ('utils', 'utils'),
-        # Config
-        ('ui_config.json', '.'),
-        # Engines OCR (ocr_helper.py + tesseract)
         ('engines', 'engines'),
         # Poppler (pdf2image)
         ('poppler', 'poppler'),
@@ -59,11 +58,7 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='Multiagente',
+    name='Sistema_Automatizacion',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -82,7 +77,7 @@ exe = EXE(
     uac_uiaccess=False,
 )
 
-# COLLECT: onefolder mode — datos al lado del exe
+# COLLECT: onefolder mode — todo dentro de _internal/ (PyInstaller 6.x standard)
 coll = COLLECT(
     exe,
     a.binaries,
@@ -91,5 +86,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Multiagente',
+    name='Sistema_Automatizacion',
 )

@@ -9949,16 +9949,30 @@ class App(ctk.CTk):
         if hasattr(self, '_ocr_lbl_tess_path') and self._ocr_lbl_tess_path.winfo_exists():
             self._ocr_lbl_tess_path.configure(text=f"({tess_path})" if tess_path else "")
 
-        # PaddleOCR
-        paddle_ok = procesar_tickets._detectar_paddle() is not None
-        paddle_path = procesar_tickets.PADDLE_PORTABLE_PYTHON if paddle_ok else procesar_tickets.PADDLE_SIDECAR
+        # PaddleOCR — background thread (no congelar la UI)
         if hasattr(self, '_ocr_lbl_paddle') and self._ocr_lbl_paddle.winfo_exists():
             self._ocr_lbl_paddle.configure(
-                text="✓ Disponible" if paddle_ok else "✗ No encontrado",
-                text_color=Palette.SUCCESS if paddle_ok else Palette.ERROR,
+                text="⏳ Verificando...",
+                text_color=Palette.TEXT_MUTED,
+            )
+        threading.Thread(target=self._verificar_paddle_bg, daemon=True).start()
+
+    def _verificar_paddle_bg(self):
+        """Corre _detectar_paddle() en background y actualiza UI via after()."""
+        import procesar_tickets
+        paddle_ok = procesar_tickets._detectar_paddle() is not None
+        paddle_path = procesar_tickets.PADDLE_PORTABLE_PYTHON if paddle_ok else procesar_tickets.PADDLE_SIDECAR
+        self.after(0, lambda: self._actualizar_estado_paddle(paddle_ok, paddle_path))
+
+    def _actualizar_estado_paddle(self, ok: bool, path: str):
+        """Callback desde el thread: actualiza labels de PaddleOCR en la UI."""
+        if hasattr(self, '_ocr_lbl_paddle') and self._ocr_lbl_paddle.winfo_exists():
+            self._ocr_lbl_paddle.configure(
+                text="✓ Disponible" if ok else "✗ No encontrado",
+                text_color=Palette.SUCCESS if ok else Palette.ERROR,
             )
         if hasattr(self, '_ocr_lbl_paddle_path') and self._ocr_lbl_paddle_path.winfo_exists():
-            self._ocr_lbl_paddle_path.configure(text=f"({paddle_path})")
+            self._ocr_lbl_paddle_path.configure(text=f"({path})" if path else "")
 
     def _ajustes_tab_ocr(self, parent):
         """Tab OCR en Ajustes: muestra estado de disponibilidad de motores."""
