@@ -54,4 +54,6 @@ engines/paddleocr/
 
 # ── Debug / temp ─────────────────────────────────────────
 debug_*.txt
-Guardalo.
+
+# ── Build backups ────────────────────────────────────────
+dist_backup*/

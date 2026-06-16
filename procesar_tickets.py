@@ -144,16 +144,94 @@ CAMPOS = [
 # Corrección posicional de patentes
 # ---------------------------------------------------------------------------
 
+# ── Formatos de patentes Mercosur ──
+# Cada tupla: (nombre, longitud, {posiciones_letra}, {posiciones_numero})
+_FORMATOS_PATENTE = [
+    # (nombre, longitud, {pos_letra}, {pos_numero}, prioridad)
+    # Prioridad más baja = preferido en empate (ARG first por ser transporte arg)
+    ('ARG_MERCOSUR', 7, {0,1,5,6}, {2,3,4},        0),   # LL NNN LL
+    ('ARG_VIEJA',    6, {0,1,2},   {3,4,5},        1),   # LLL NNN
+    ('PRY_VIEJO',    6, {0,1,2},   {3,4,5},        2),   # LLL NNN (igual ARG vieja)
+    ('BRA_MERCOSUR', 7, {0,1,2,4}, {3,5,6},        3),   # LLL N L NN
+    ('BRA_VIEJA',    7, {0,1,2},   {3,4,5,6},      4),   # LLL NNNN
+    ('URY',          7, {0,1,2},   {3,4,5,6},      5),   # LLL NNNN (igual BRA vieja)
+    ('PRY_MERCOSUR', 7, {0,1,2,3}, {4,5,6},        6),   # LLLL NNN
+    ('CHL_NUEVO',    6, {0,1,2,3}, {4,5},          7),   # LLLL NN
+    ('CHL_VIEJO',    6, {0,1},     {2,3,4,5},      8),   # LL NNNN
+]
+
+# Mapa: cuando OCR pone un DÍGITO donde debería ir una LETRA
+_DIGITO_A_LETRA = {
+    '0': 'O', '1': 'I', '2': 'Z', '3': 'E', '4': 'A',
+    '5': 'S', '6': 'G', '7': 'T', '8': 'B',
+}
+# Mapa inverso: cuando OCR pone una LETRA donde debería ir un NÚMERO
+_LETRA_A_DIGITO = {
+    'A': '4', 'B': '8', 'E': '3', 'G': '6', 'I': '1',
+    'L': '1', 'O': '0', 'S': '5', 'T': '7', 'Z': '2',
+}
+# Pares simétricos: 0↔O, 1↔I, 8↔B, 5↔S, 2↔Z, 3↔E, 4↔A, 6↔G, 7↔T
+
+
+def _detectar_formato_patente(solo_alnum: str):
+    """Detecta el formato de patente por patrón de letras/números en cada posición.
+    
+    En lugar de contar solo aciertos exactos (isalpha/isdigit), también cuenta
+    caracteres *corregibles* vía los mapas OCR (ej: '6' donde esperamos letra
+    porque 6→G es confusión típica de OCR).
+    
+    Retorna (nombre_formato, set_letras, set_números) o (None, None, None)
+    si no reconoce el formato.
+    """
+    n = len(solo_alnum)
+    best = (None, None, None)
+    best_score = 0
+    best_correctas = -1   # desempate 1: preferir menos correcciones
+    best_prio = 999       # desempate 2: prioridad de formato (ARG > extranjero)
+
+    for name, flen, letras_set, nums_set, prio in _FORMATOS_PATENTE:
+        if flen != n:
+            continue
+        correctas = 0
+        corregibles = 0
+        for i, c in enumerate(solo_alnum):
+            if i in letras_set:
+                if c.isalpha():
+                    correctas += 1
+                elif c in _DIGITO_A_LETRA:   # dígito que puede ser letra
+                    corregibles += 1
+            elif i in nums_set:
+                if c.isdigit():
+                    correctas += 1
+                elif c in _LETRA_A_DIGITO:   # letra que puede ser dígito
+                    corregibles += 1
+        score = correctas + corregibles
+        mejora = (
+            score > best_score
+            or (score == best_score and correctas > best_correctas)
+            or (score == best_score and correctas == best_correctas and prio < best_prio)
+        )
+        if mejora:
+            best_score = score
+            best = (name, letras_set, nums_set)
+            best_correctas = correctas
+            best_prio = prio
+
+    # Tolerar 1 caracter que no sea ni correcto ni corregible
+    if best_score >= n - 1:
+        return best
+
+    return (None, None, None)
+
+
 def corregir_patente(valor: str) -> str:
     """Corrige patentes mal leídas por OCR usando la posición de cada carácter.
     
-    Sabemos qué posición debe ser letra y cuál número según el formato:
+    Primero detecta el formato (ARG, BRA, CHL, PRY, URY) y aplica la corrección
+    posicional SOLO para las posiciones que corresponden según ese formato.
     
-    ARG Mercosur (7 chars):  LL NNN LL   → pos {0,1} letras, {2,3,4} nums, {5,6} letras
-    ARG Vieja (6 chars):     LLL NNN     → pos {0,1,2} letras, {3,4,5} nums
-    
-    Si un dígito aparece donde esperamos letra → se mapea a la letra más parecida
-    Si una letra aparece donde esperamos número → se mapea al dígito más parecido
+    Si la patente no coincide con ningún formato conocido (extranjera no Mercosur),
+    se devuelve limpia de caracteres no alfanuméricos pero sin corregir.
     """
     if not valor or not isinstance(valor, str):
         return valor
@@ -163,37 +241,16 @@ def corregir_patente(valor: str) -> str:
     if not solo_alnum:
         return valor
 
-    # Mapa: cuando Tesseract pone un DÍGITO donde debería ir una LETRA
-    DIGITO_A_LETRA = {
-        '0': 'O', '1': 'I', '2': 'Z', '3': 'E', '4': 'A',
-        '5': 'S', '6': 'G', '7': 'T', '8': 'B',
-    }
-    # Mapa inverso: cuando Tesseract pone una LETRA donde debería ir un NÚMERO
-    LETRA_A_DIGITO = {
-        'A': '4', 'B': '8', 'E': '3', 'G': '6', 'I': '1',
-        'L': '1', 'O': '0', 'S': '5', 'T': '7', 'Z': '2',
-    }
-    # Pares simétricos: 0↔O, 1↔I, 8↔B, 5↔S, 2↔Z, 3↔E, 4↔A, 6↔G, 7↔T
+    fmt, letras_set, nums_set = _detectar_formato_patente(solo_alnum)
+    if fmt is None:
+        return solo_alnum  # formato desconocido → pasar limpio sin corregir
 
     chars = list(solo_alnum)
-    n = len(chars)
-
-    if n == 7:
-        # Mercosur ARG: LL NNN LL
-        letras = {0, 1, 5, 6}
-        nums   = {2, 3, 4}
-    elif n == 6:
-        # ARG Vieja: LLL NNN (prioritario para transporte argentino)
-        letras = {0, 1, 2}
-        nums   = {3, 4, 5}
-    else:
-        return valor  # formato desconocido, no tocamos
-
     for i, c in enumerate(chars):
-        if i in letras and c.isdigit():
-            chars[i] = DIGITO_A_LETRA.get(c, c)
-        elif i in nums and c.isalpha():
-            chars[i] = LETRA_A_DIGITO.get(c, c)
+        if i in letras_set and c.isdigit():
+            chars[i] = _DIGITO_A_LETRA.get(c, c)
+        elif i in nums_set and c.isalpha():
+            chars[i] = _LETRA_A_DIGITO.get(c, c)
 
     return ''.join(chars)
 
@@ -724,8 +781,15 @@ def extraer_datos(text: str) -> dict:
 
     def _extraer_patentes_contextual():
         """Busca TODAS las patentes en el texto en orden de aparición:
-        primera → Camion, segunda → Acoplado."""
-        pats = re.findall(r'([A-Z]{2,3}\d{3}[A-Z]{0,2})', text, re.IGNORECASE)
+        primera → Camion, segunda → Acoplado.
+        Acepta todos los formatos Mercosur:
+        - ARG: AB123CD, ABC123
+        - BRA: ABC1D23, ABC1234
+        - CHL: HFBH63, PXDF80, AA1234
+        - PRY: ABCD123, ABC123
+        - URY: ABC1234
+        """
+        pats = re.findall(r'\b([A-Z]{2,4}\d{1,4}[A-Z]{0,2}\d{0,2})\b', text, re.IGNORECASE)
         validas = [p.upper() for p in pats if len(p) in (6, 7)]
         return validas[:2] if validas else ["", ""]
 
@@ -1527,11 +1591,11 @@ def extraer_salida_aduana(pdf_path: str, modo: str = "flexi") -> dict:
 def extraer_mic_dta(pdf_path: str) -> dict:
     """
     Extrae datos de un PDF de MIC/DTA (Manifiesto Internacional de Carga).
-    Estos PDFs contienen texto (no son escaneados).
+    Extrae por campos numerados (1-41) del formulario MIC/DTA.
 
-    Retorna dict con:
-        mic_numero, patente_camion, patente_semi, peso_bruto, precinto,
-        permiso_internacional, id_destinacion, exportador, destinatario
+    Retorna dict con las mismas claves que espera _build_fila_control_final:
+        plt, patente_camion, patente_semi, peso_bruto, precinto,
+        id_destinacion, exportador, conductor, cuil, contenedor
     """
     import fitz
     doc = fitz.open(pdf_path)
@@ -1543,70 +1607,94 @@ def extraer_mic_dta(pdf_path: str) -> dict:
     if not text.strip():
         return {"_error": "El PDF de MIC/DTA no tiene texto"}
 
+    # Separar sección MIC (campos 1-41) de la sección CRT que sigue después
+    mic_end = text.find("CRT\nCarta de Porte")
+    mic_text = text[:mic_end] if mic_end > 0 else text
+
+    lines = mic_text.split("\n")
+    field_pat = re.compile(r"^(\d{1,2})(?:\s|$)")
+    blocks = {}
+    current_num = None
+    current_lines = []
+
+    for line in lines:
+        m = field_pat.match(line.strip())
+        if m:
+            num = int(m.group(1))
+            if 1 <= num <= 41:
+                if current_num is not None:
+                    blocks[current_num] = "\n".join(current_lines)
+                current_num = num
+                current_lines = [line.strip()]
+                continue
+        if current_num is not None:
+            current_lines.append(line.rstrip())
+
+    if current_num is not None:
+        blocks[current_num] = "\n".join(current_lines)
+
+    def _f(n):
+        return blocks.get(n, "")
+
     data = {}
 
-    # MIC/DTA number: código como 26AR243130A
-    m = re.search(r"(?:\d+\s*/\s*)?(\d{2}[A-Z]{2}\d{5,6}[A-Z]?)", text)
-    data["mic_numero"] = m.group(1) if m else ""
+    # Campo 4 — N° MIC/DTA
+    txt = _f(4)
+    m = re.search(r"(\d{2}[A-Z]{2}\d{5,6}[A-Z]?)", txt)
+    data["plt"] = m.group(1) if m else ""
 
-    # Permiso Internacional: después de "Nro. Permiso. Internacional:" o "Permiso. Internacional:"
-    m = re.search(r"Permiso\.?\s*Internacional[:\s]*(\S+)", text, re.IGNORECASE)
-    data["permiso_internacional"] = m.group(1) if m else ""
-
-    # Patentes argentinas: formato nuevo (AA111AA) o viejo (AAA111)
-    pat_all = re.findall(r"\b(?:[A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{3}\d{3})\b", text)
-    # Filtrar falsos positivos
-    patentes = [p for p in pat_all if not p.startswith("PLT")]
-    if len(patentes) >= 2:
-        data["patente_camion"] = patentes[0]
-        data["patente_semi"] = patentes[1]
-    elif len(patentes) == 1:
-        data["patente_camion"] = patentes[0]
-        data["patente_semi"] = ""
-    else:
-        data["patente_camion"] = ""
-        data["patente_semi"] = ""
-
-    # Peso bruto / Cantidad de bultos: "Cantidad de bultos" o "Quantidade de volumes"
-    m = re.search(r"(?:Cantidad de bultos|Quantidade de volumes)\s*\n\s*(\d[\d.,]*)", text, re.IGNORECASE)
+    # Campo 11 — Patente camión (arg/chilena/extranjera)
+    txt = _f(11)
+    # Buscar la línea después de "Placa de Camion" / "Placa do caminhao"
+    m = re.search(r"Placa\s*(?:de\s*)?Camion[^\n]*\n[^\n]*\n\s*([A-Z0-9]{4,8})\b", txt, re.IGNORECASE)
     if not m:
-        # Fallback: buscar el número más grande después de "27890" u otro patrón
-        m = re.search(r"\b(\d{4,6})\b", text)
+        # Fallback: cualquier token de 4-8 alfanumérico que no sea label
+        m = re.search(r"\b([A-Z0-9]{4,8})\b", txt)
+    data["patente_camion"] = m.group(1) if m else ""
+
+    # Campo 15 — Patente semi (campo 22 no suele tener el valor)
+    txt = _f(15)
+    labels_15 = {"X", "SEMIREMOLQUE", "REMOLQUE", "SEMI", "SEMI-REBOQUE", "REBOQUE", "PLACA", "PLACA:"}
+    pat_all = re.findall(r"\b([A-Z0-9]{4,8})\b", txt.upper())
+    patentes = [p for p in pat_all if p not in labels_15 and not p.isdigit()]
+    data["patente_semi"] = patentes[0] if patentes else ""
+
+    # Campo 31 — Cantidad de bultos / Peso bruto
+    txt = _f(31)
+    m = re.search(r"(?:Cantidad de bultos|Quantidade de volumes)[^\n]*\n\s*(\d[\d.,]*)", txt)
+    if not m:
+        m = re.search(r"(\d[\d.,]*)", txt)
     data["peso_bruto"] = m.group(1).replace(",", "").replace(".", "") if m else ""
 
-    # Precinto: "Numero de los precintos" — el valor suele estar 1-2 líneas después
-    m = re.search(r"(?:Numero de los precintos|Numero dos lacres)\s*(?:\n[^A-Z]*)?\s*\n\s*([A-Z0-9]{6,})", text, re.IGNORECASE | re.MULTILINE)
-    if m:
-        data["precinto"] = m.group(1).strip()
-    else:
-        data["precinto"] = ""
+    # Campo 37 — Precinto
+    txt = _f(37)
+    m = re.search(r"([A-Z0-9]{6,})", txt)
+    data["precinto"] = m.group(1).strip() if m else ""
 
-    # Id Destinación: buscarlo en "Documentos Anexos" / "Documentos anexos"
-    m = re.search(r"Documentos\s+Anexos[^\n]*\n\s*Destinacion[:\s]*(\S+)", text, re.IGNORECASE)
-    if not m:
-        # Fallback: código tipo 26069EC01000398W en el texto
-        m = re.search(r"\b(\d{5}[A-Z]{2}\d{6}[A-Z])\b", text)
+    # Campo 36 — Documentos Anexos / Destinación
+    txt = _f(36)
+    m = re.search(r"Destinacion[:\s]*(\S+)", txt)
     data["id_destinacion"] = m.group(1) if m else ""
 
-    # Exportador / Remitente: buscar línea después de "Remitente" o "Remetente"
-    # El texto tiene formato "33 Remitente\n/ Remetente\nNOMBRE\n"
-    m = re.search(r"(?:^|\n)\s*\d*\s*Remitente\s*\n\s*(?:/\s*Remetente\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
+    # Campo 33 — Exportador / Remitente
+    txt = _f(33)
+    m = re.search(r"(?:Remitente|Remetente)\s*\n\s*/\s*\w+[^\n]*\n\s*([^\n]+)", txt)
     if not m:
-        m = re.search(r"(?:^|\n)\s*\d*\s*Remetente\s*\n\s*(?:/\s*Remitente\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
+        m = re.search(r"Remitente\s*\n[^/][^\n]*", txt)
     data["exportador"] = m.group(1).strip() if m else ""
 
-    # Destinatario: buscar línea después de "Destinatario" o "Consignatario"
-    m = re.search(r"(?:^|\n)\s*\d*\s*Destinatario\s*\n\s*(?:/\s*\w+\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
-    if not m:
-        m = re.search(r"(?:^|\n)\s*\d*\s*Consignatario\s*\n\s*(?:/\s*\w+\s*\n\s*)?(.+?)(?:\n|$)", text, re.IGNORECASE)
-    data["destinatario"] = m.group(1).strip() if m else ""
+    # Campo 40 — Conductor + DNI/RUT (Argentina DNI o Chile CI/RUT)
+    txt = _f(40)
+    m = re.search(r"CONDUCTOR 1:\s*(.+?)\s+DOC:\s*(?:DNI|CI)\s*([\d-]+)", txt)
+    if m:
+        data["conductor"] = m.group(1).strip()
+        data["cuil"] = m.group(2).strip()
+    else:
+        data["conductor"] = ""
+        data["cuil"] = ""
 
-    # N° Carta de Porte / Conocimiento
-    # El valor suele estar 2 líneas después del label
-    m = re.search(r"(?:N[°º]\s*(?:carta de porte|conhecimiento)|Doc\.?\s*Transporte)\s*\n[^\n]*\n\s*(\S+)", text, re.IGNORECASE)
-    if not m:
-        m = re.search(r"\b(069[A-Z]{2}\d{6,})\b", text)
-    data["n_carta_porte"] = m.group(1) if m else ""
+    # Contenedor: no aplica en MIC terrestre
+    data["contenedor"] = ""
 
     return data
 
@@ -1666,13 +1754,19 @@ def api_vision_extraer_datos(ruta_pdf: str, api_key: str,
 }
 
 Instrucciones por campo:
-- "Patente": buscar la etiqueta "Patente" o "Camión". Las patentes argentinas usan:
-  - Formato NUEVO (Mercosur): AB123CD (2 letras + 3 números + 2 letras)
-  - Formato VIEJO: ABC123 (3 letras + 3 números)
-  - IMPORTANTE: no confundas la letra O (oh) con el número 0 (cero). Si una patente nueva termina con letras pero ves un número donde va una letra (ej: "AF1910A" → es "AF191OA"), usá la interpretación que cumple el formato correcto de patente argentina.
-- "Semirremolque": buscar "Acoplado" o "Semirremolque"
+- "Patente": buscar la etiqueta "Patente" o "Camión". Las patentes pueden ser:
+  - ARGENTINA nuevo (Mercosur): AB123CD (2 letras + 3 números + 2 letras)
+  - ARGENTINA viejo: ABC123 (3 letras + 3 números)
+  - BRASILERA nuevo: ABC1D23 (3 letras + 1 número + 1 letra + 2 números)
+  - BRASILERA viejo: ABC1234 (3 letras + 4 números)
+  - CHILENA: 4 letras + 2 números (ej: HFBH63) o 2 letras + 4 números
+  - PARAGUAYA: 4 letras + 3 números o 3 letras + 3 números
+  - URUGUAYA: 3 letras + 4 números
+  - Si ves una combinación de letras y números de 5 a 7 caracteres, probablemente es la patente.
+  - IMPORTANTE: no confundas la letra O (oh) con el número 0 (cero). Si una patente tiene números donde deberían ir letras (ej: "AF1910A" → es "AF191OA"), usá la interpretación correcta según el formato.
+- "Semirremolque": buscar "Acoplado", "Semirremolque" o "Semi"
 - "Conductor": buscar "Conductor" o "Chofer"
-- "DNI": solo números, buscar "DNI" o "Documento"
+- "DNI": puede ser DNI argentino (solo números), CI chileno (ej: 24581338-4 con guión), o RUT. Tomar el número completo incluyendo el guión si aparece.
 - "Neto": solo el número, buscar "Neto" o "Peso Neto"
 - "Tara Contenedor": solo el número, buscar "Tara" o "Tara Contenedor"
 - "Contenedor": código de 4 letras + 7 números, buscar "Contenedor" o "ISO" o "CNTR"

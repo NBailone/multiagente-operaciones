@@ -7182,6 +7182,7 @@ class App(ctk.CTk):
         self.tree_carga.delete(*self.tree_carga.get_children())
         if hasattr(self, 'tree_control_final'):
             self.tree_control_final.delete(*self.tree_control_final.get_children())
+            self.tree_control_final.heading("salida_aduana", text="Salida Aduana")
         if hasattr(self, 'tree_coordinacion'):
             self.tree_coordinacion.delete(*self.tree_coordinacion.get_children())
         # Resetear a vista tickets
@@ -7728,19 +7729,19 @@ class App(ctk.CTk):
                     if not s: return ""
                     return _re.sub(r'\s+', '', s).upper()
 
-                # ── Build lookup structures ──
+                # ── Build lookup structures desde MIC/DTA ──
                 aduana_por_patente = {}
                 aduana_por_precinto = {}
                 aduana_por_dni = {}
-                for ad in aduanas_data:
-                    pat = _norm_pat_match(ad.get("patente_camion", ""))
-                    if pat: aduana_por_patente[pat] = ad
-                    if ad.get("precinto"):
-                        for p in ad["precinto"].upper().split():
+                for md in mic_data:
+                    pat = _norm_pat_match(md.get("patente_camion", ""))
+                    if pat: aduana_por_patente[pat] = md
+                    if md.get("precinto"):
+                        for p in md["precinto"].upper().split():
                             p = p.strip()
-                            if p: aduana_por_precinto[p] = ad
-                    dni = _re.sub(r'\D', '', ad.get("cuil", ""))
-                    if dni: aduana_por_dni[dni] = ad
+                            if p: aduana_por_precinto[p] = md
+                    dni = _re.sub(r'\D', '', md.get("cuil", ""))
+                    if dni: aduana_por_dni[dni] = md
 
                 # Excel lookups
                 excel_por_patente = {}
@@ -7864,12 +7865,12 @@ class App(ctk.CTk):
 
                             # 2e: Sin ningún match, escanear todo por precinto
                             if not cont_data and not aduana:
-                                for ad in aduanas_data:
-                                    prec = ad.get("precinto", "").upper().strip()
+                                for md in mic_data:
+                                    prec = md.get("precinto", "").upper().strip()
                                     for p in prec.split():
                                         if p in excel_por_precinto:
                                             cont_data, cont_idx = excel_por_precinto[p]
-                                            aduana = ad
+                                            aduana = md
                                             self._log(f"  ⚠ Sin match x precinto (último): {stem} — precinto={p}")
                                             break
                                     if cont_data: break
@@ -8307,6 +8308,13 @@ class App(ctk.CTk):
         try:
             stem = data.get("valores", ())[0] if data.get("valores") else "?"
             iid = self.tree_control_final.insert("", "end", values=data["valores"], tags=(data["tag"],))
+            # Actualizar header según modo (terrestre → MIC/DTA, flexi → Salida Aduana)
+            if len(self.tree_control_final.get_children()) == 1:
+                modo = data.get("modo", "flexi")
+                self.tree_control_final.heading(
+                    "salida_aduana",
+                    text="MIC/DTA" if modo == "terrestre" else "Salida Aduana"
+                )
             self._log(f"  + Fila insertada: {stem}")
             # Store comparison data
             if not hasattr(self, '_control_final_comparacion'):
@@ -8332,7 +8340,7 @@ class App(ctk.CTk):
             return
 
         modo = datos.get("modo", "flexi")
-        aduana_header = "PLT Aduana + MIC/DTA" if modo == "terrestre" else "Salida Aduana"
+        aduana_header = "MIC/DTA" if modo == "terrestre" else "Salida Aduana"
 
         dlg = ctk.CTkToplevel(self)
         dlg.title("Comparación — Control Final")
@@ -8465,16 +8473,24 @@ class App(ctk.CTk):
     def _cargar_datos_seleccionar_pdfs(self):
         from tkinter import filedialog as tk_filedialog
         rutas = tk_filedialog.askopenfilenames(
-            title="Seleccionar tickets PDF",
-            filetypes=[("Archivos PDF", "*.pdf")],
+            title="Seleccionar PDFs y Excel CONTENEDORES",
+            filetypes=[("Archivos soportados", "*.pdf *.xlsx *.xls")],
         )
         if not rutas:
+            return
+        rutas_pdf = [r for r in rutas if r.lower().endswith('.pdf')]
+        rutas_excel = [r for r in rutas if r.lower().endswith(('.xlsx', '.xls'))]
+        if not rutas_pdf:
+            self._log("[Control Datos] ⚠ No seleccionaste ningún PDF.")
+            return
+        if not rutas_excel:
+            self._log("[Control Datos] ⚠ No seleccionaste ningún archivo Excel CONTENEDORES.")
             return
         # Mostrar sección tickets, ocultar otras
         self._section_coord.pack_forget()
         self._section_final.pack_forget()
         self._section_tickets.pack(fill="both", expand=True, pady=(0, 6))
-        self._log(f"[Control Datos] Procesando {len(rutas)} PDFs...")
+        self._log(f"[Control Datos] Procesando {len(rutas_pdf)} PDFs contra {len(rutas_excel)} Excel(s)...")
         if self.tarea_activa:
             messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
             return
@@ -8489,7 +8505,7 @@ class App(ctk.CTk):
             self.progress_carga.start()
         t = threading.Thread(
             target=self._cargar_datos_worker,
-            args=("local", list(rutas)),
+            args=("local", list(rutas_pdf), list(rutas_excel)),
             daemon=True,
         )
         t.start()
@@ -9194,12 +9210,16 @@ class App(ctk.CTk):
         return resultado
 
     # ── T4: Worker OCR ────────────────────────────────────────────────
-    def _cargar_datos_worker(self, fuente, rutas):
+    def _cargar_datos_worker(self, fuente, rutas, rutas_excel=None):
         """Worker que corre en threading.Thread daemon.
         
         Procesa cada PDF: OCR → extracción → matching CONTENEDOR → lectura DATOS.
         Pushea resultados a log_queue como ("_OCR_RESULT_", data).
         Al finalizar pushea ("_OCR_DONE_", None).
+        
+        Args:
+            rutas_excel: lista de rutas a archivos CONTENEDORES seleccionados
+                         por el usuario. Si es None, escanea Desktop (viejo).
         """
         self._set_log_panel("cargar-datos")
         import procesar_tickets
@@ -9213,7 +9233,11 @@ class App(ctk.CTk):
         total = len(rutas)
         # ── 0. Cargar caché de CONTENEDORES (una vez, zero opens repetidos) ──
         self._contenedores_cache = {}
-        self._cargar_cache_contenedores()
+        if rutas_excel:
+            self._log(f"[Control Datos] Usando {len(rutas_excel)} Excel(s) seleccionados por el usuario")
+            self._cargar_cache_contenedores(rutas_excel)
+        else:
+            self._cargar_cache_contenedores()  # escanea Desktop (compatibilidad)
         # ── 1. OCR: según método seleccionado ──
         ocr_method = self.config.get("ocr_method", "api_vision")
         textos_por_pdf = {}
@@ -9928,19 +9952,28 @@ class App(ctk.CTk):
     def _verificar_motores_ocr(self):
         """Verifica Tesseract y PaddleOCR después de que el panel se renderice (evita demora al abrir)."""
         import procesar_tickets
-        # Tesseract
-        try:
-            import pytesseract
-            pytesseract.get_tesseract_version()
-            tess_ok = True
-            tess_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        except Exception:
-            tess_ok = False
-            tess_path = ""
+        # Tesseract — priorizar sidecar portátil sobre instalación del sistema
+        import pytesseract
         tess_sidecar = os.path.join(procesar_tickets.TESSERACT_SIDECAR, "tesseract.exe")
-        if not tess_ok and os.path.isfile(tess_sidecar):
-            tess_ok = True
-            tess_path = tess_sidecar
+        tess_ok = False
+        tess_path = ""
+        if os.path.isfile(tess_sidecar):
+            try:
+                pytesseract.pytesseract.tesseract_cmd = tess_sidecar
+                pytesseract.get_tesseract_version()
+                tess_ok = True
+                tess_path = tess_sidecar
+            except Exception:
+                pass
+        if not tess_ok:
+            try:
+                pytesseract.pytesseract.tesseract_cmd = procesar_tickets.TESSERACT_CMD
+                pytesseract.get_tesseract_version()
+                tess_ok = True
+                tess_path = procesar_tickets.TESSERACT_CMD
+            except Exception:
+                tess_ok = False
+                tess_path = ""
         if hasattr(self, '_ocr_lbl_tesseract') and self._ocr_lbl_tesseract.winfo_exists():
             self._ocr_lbl_tesseract.configure(
                 text="✓ Disponible" if tess_ok else "✗ No encontrado",

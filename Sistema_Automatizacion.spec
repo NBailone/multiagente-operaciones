@@ -14,6 +14,9 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+a.datas += Tree('engines\\tesseract', 'engines/tesseract')
+a.datas += Tree('engines\\paddleocr', 'engines/paddleocr')
+a.datas += Tree('poppler', 'poppler')
 pyz = PYZ(a.pure)
 
 exe = EXE(
