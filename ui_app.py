@@ -71,7 +71,7 @@ from tkinter import ttk, messagebox
 import openpyxl
 import xlrd
 
-from constants import Palette, FONT_FAMILY, FONT_MONO
+from constants import Palette, FONT_FAMILY, FONT_MONO, FONT_LEVEL_SCALES, FONT_BASE_SIZES
 from constants import IMAP_SERVER, PUERTO_IMAP
 from constants import DESTINATARIOS_GRUPAL, DESTINATARIOS_INDIVIDUAL
 
@@ -6438,88 +6438,110 @@ class App(ctk.CTk):
         if not datos:
             return
 
-        dlg = ctk.CTkToplevel(self)
-        dlg.title(f"Comparación — {datos['archivo']}")
-        ancho, alto = 520, 420
-        dlg.geometry(f"{ancho}x{alto}")
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.resizable(False, False)
-        # Centrar en la pantalla
-        dlg.update_idletasks()
-        x = (dlg.winfo_screenwidth() - ancho) // 2
-        y = (dlg.winfo_screenheight() - alto) // 2
-        dlg.geometry(f"{ancho}x{alto}+{x}+{y}")
+        def _build_popup(level):
+            fsizes = self._get_font_sizes(level)
+            geom = self._get_popup_geometry(520, 420, level)
+            ancho = int(geom.split("x")[0])
 
-        # Encabezados: Campo | Ticket | Contenedor
-        header = ctk.CTkFrame(dlg, fg_color=Palette.BG_SIDEBAR, corner_radius=6, height=36)
-        header.pack(fill="x", padx=12, pady=(12, 0))
-        header.pack_propagate(False)
+            dlg = ctk.CTkToplevel(self)
+            dlg.title(f"Comparación — {datos['archivo']}")
+            dlg.transient(self)
+            dlg.grab_set()
+            dlg.resizable(False, False)
 
-        for col_i, txt in enumerate(["Campo", "Ticket (OCR)", "Contenedor (Excel)"]):
-            ctk.CTkLabel(
-                header, text=txt, width=160 if col_i > 0 else 120,
-                font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-                text_color=Palette.TEXT_SECONDARY,
-            ).pack(side="left", padx=(12, 0))
+            # ── Top bar: header + font level override ──────────────────
+            top_bar = ctk.CTkFrame(dlg, fg_color=Palette.BG_SIDEBAR, corner_radius=6, height=36)
+            top_bar.pack(fill="x", padx=12, pady=(12, 0))
+            top_bar.pack_propagate(False)
 
-        # Cuerpo scrollable: una fila por campo
-        scroll = ctk.CTkScrollableFrame(dlg, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=12, pady=8)
-
-        campos = ["Patente", "Semirremolque", "Conductor", "DNI",
-                   "Neto (kg)", "Tara (kg)", "Contenedor", "Permiso"]
-
-        for campo in campos:
-            val_ticket = datos["ticket"].get(campo, "")
-            val_cont   = datos["contenedor"].get(campo, "")
-            ok         = datos["ok"].get(campo, False)
-
-            bg = "#C8FFC8" if ok else "#FFC8C8"
-            fg = "#006400" if ok else "#8B0000"
-
-            row = ctk.CTkFrame(scroll, fg_color="transparent")
-            row.pack(fill="x", pady=1)
-
-            ctk.CTkLabel(
-                row, text=campo, width=120, anchor="w",
-                font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-                text_color=Palette.TEXT_PRIMARY,
-            ).pack(side="left", padx=(4, 0))
-
-            for val in [val_ticket, val_cont]:
+            for col_i, txt in enumerate(["Campo", "Ticket (OCR)", "Contenedor (Excel)"]):
                 lbl = ctk.CTkLabel(
-                    row, text=val, width=160, anchor="center",
-                    font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-                    fg_color=bg, text_color=fg, corner_radius=4,
+                    top_bar, text=txt, width=120 if col_i == 0 else 160,
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
+                    text_color=Palette.TEXT_SECONDARY,
                 )
-                lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+                kwargs = {"side": "left", "padx": 4}
+                if col_i > 0:
+                    kwargs["fill"] = "x"
+                    kwargs["expand"] = True
+                lbl.pack(**kwargs)
 
-        # Leyenda al pie: círculos de colores + texto (centrado)
-        leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
-        leyenda.pack(fill="x", pady=(0, 12))
-        inner = ctk.CTkFrame(leyenda, fg_color="transparent")
-        inner.pack(anchor="center")
-        # Círculo verde
-        ctk.CTkLabel(
-            inner, text="", width=14, height=14,
-            fg_color="#C8FFC8", corner_radius=7,
-        ).pack(side="left", padx=(4, 2))
-        ctk.CTkLabel(
-            inner, text="Coincide",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 14))
-        # Círculo rojo
-        ctk.CTkLabel(
-            inner, text="", width=14, height=14,
-            fg_color="#FFC8C8", corner_radius=7,
-        ).pack(side="left", padx=(4, 2))
-        ctk.CTkLabel(
-            inner, text="Difiere",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 14))
+            # Font level override selector
+            override_menu = ctk.CTkOptionMenu(
+                top_bar, values=["1", "2", "3"],
+                font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+                fg_color=Palette.BG_INPUT, button_color=Palette.ACCENT,
+                width=50, height=26,
+                command=lambda v: (dlg.destroy(), _build_popup(int(v))),
+            )
+            override_menu.set(str(level))
+            override_menu.pack(side="right", padx=(0, 8))
+
+            # Cuerpo: frame normal sin scroll
+            body = ctk.CTkFrame(dlg, fg_color="transparent")
+            body.pack(fill="x", padx=12, pady=8)
+
+            campos = [("Camion", "Patente"), ("Semirremolque", "Semirremolque"), ("Conductor", "Conductor"),
+                       ("DNI", "DNI"), ("Neto (kg)", "Neto (kg)"), ("Tara (kg)", "Tara (kg)"),
+                       ("Contenedor", "Contenedor"), ("Permiso", "Permiso")]
+
+            for label, key in campos:
+                val_ticket = datos["ticket"].get(key, "")
+                val_cont   = datos["contenedor"].get(key, "")
+                ok         = datos["ok"].get(key, False)
+
+                bg = "#C8FFC8" if ok else "#FFC8C8"
+                fg = "#006400" if ok else "#8B0000"
+
+                row = ctk.CTkFrame(body, fg_color="transparent")
+                row.pack(fill="x", pady=1)
+
+                ctk.CTkLabel(
+                    row, text=label, width=120, anchor="w",
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"], weight="bold"),
+                    text_color=Palette.TEXT_PRIMARY,
+                ).pack(side="left", padx=(4, 0))
+
+                for val in [val_ticket, val_cont]:
+                    lbl = ctk.CTkLabel(
+                        row, text=val, width=160, anchor="center",
+                        font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
+                        fg_color=bg, text_color=fg, corner_radius=4,
+                    )
+                    lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+
+            # Leyenda al pie
+            leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
+            leyenda.pack(fill="x", pady=(0, 12))
+            inner = ctk.CTkFrame(leyenda, fg_color="transparent")
+            inner.pack(anchor="center")
+            ctk.CTkLabel(
+                inner, text="", width=14, height=14,
+                fg_color="#C8FFC8", corner_radius=7,
+            ).pack(side="left", padx=(4, 2))
+            ctk.CTkLabel(
+                inner, text="Coincide",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["legend"]),
+                text_color=Palette.TEXT_MUTED,
+            ).pack(side="left", padx=(0, 14))
+            ctk.CTkLabel(
+                inner, text="", width=14, height=14,
+                fg_color="#FFC8C8", corner_radius=7,
+            ).pack(side="left", padx=(4, 2))
+            ctk.CTkLabel(
+                inner, text="Difiere",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["legend"]),
+                text_color=Palette.TEXT_MUTED,
+            ).pack(side="left", padx=(0, 14))
+
+            # Ajustar ventana al contenido real
+            dlg.update_idletasks()
+            alto = dlg.winfo_reqheight()
+            x = (dlg.winfo_screenwidth() - ancho) // 2
+            y = (dlg.winfo_screenheight() - alto) // 2
+            dlg.geometry(f"{ancho}x{alto}+{x}+{y}")
+
+        _build_popup(self.config.get("font_level", 1))
 
     def _limpiar_log(self):
         self.log_text.configure(state="normal")
@@ -6625,6 +6647,39 @@ class App(ctk.CTk):
             nombre_esc = self._cfg_obtener_rutas("escritorio_nombre", "Desktop")
             return os.path.join(os.path.expanduser("~"), nombre_esc)
         return valor
+
+    def _get_font_sizes(self, level=None):
+        """Return scaled font sizes for the given level."""
+        if level is None:
+            level = self.config.get("font_level", 1)
+        scale = FONT_LEVEL_SCALES.get(level, 1.0)
+        return {
+            "data": int(FONT_BASE_SIZES["data"] * scale),
+            "header": int(FONT_BASE_SIZES["header"] * scale),
+            "legend": int(FONT_BASE_SIZES["legend"] * scale),
+        }
+
+    def _get_popup_geometry(self, base_w, base_h, level=None):
+        """Return scaled geometry string for popups."""
+        if level is None:
+            level = self.config.get("font_level", 1)
+        scale = FONT_LEVEL_SCALES.get(level, 1.0)
+        w = int(base_w * scale)
+        h = int(base_h * scale)
+        return f"{w}x{h}"
+
+    def _calc_popup_height(self, num_rows, level=None):
+        """Calculate popup height based on number of data rows."""
+        if level is None:
+            level = self.config.get("font_level", 1)
+        scale = FONT_LEVEL_SCALES.get(level, 1.0)
+        top_bar = 48          # header bar + padding
+        row_h = int(32 * scale)  # each data row
+        legend = 42           # legend at bottom
+        scroll_pad = 16       # scroll frame padding
+        window_pad = 24       # top + bottom window padding
+        h = top_bar + (num_rows * row_h) + legend + scroll_pad + window_pad
+        return h
 
     def _recuperar_password(self, parent_dlg, lbl_status=None):
         """Envía la contraseña por SMTP directamente al correo configurado."""
@@ -7502,95 +7557,116 @@ class App(ctk.CTk):
             return
 
         etiquetas = {
-            "giro": "Giro / Pto Salida",
-            "carpeta": "Carpeta", "cliente": "Cliente / Destinatario",
+            "giro": "Puerto Salida",
+            "carpeta": "Carpeta", "cliente": "Cliente",
             "destino": "Destino", "buque": "Buque", "viaje": "Viaje",
             "booking": "Booking", "pto_descarga": "Pto Descarga",
             "pto_final": "Pto Final",
-            "fecha_of_pe": "Fecha Oficialización",
+            "fecha_of_pe": "Fecha Ofic.",
             "fecha_carga": "Fecha Carga",
             "peso_flexi": "Peso Flexi (kg)",
         }
 
-        dlg = ctk.CTkToplevel(self)
-        dlg.title("Comparación — Coordinación vs Excel")
-        ancho, alto = 760, 480
-        dlg.geometry(f"{ancho}x{alto}")
-        dlg.transient(self)
-        dlg.resizable(False, False)
-        dlg.update_idletasks()
-        x = (dlg.winfo_screenwidth() - ancho) // 2
-        y = (dlg.winfo_screenheight() - alto) // 2
-        dlg.geometry(f"{ancho}x{alto}+{x}+{y}")
+        def _build_popup(level):
+            fsizes = self._get_font_sizes(level)
+            geom = self._get_popup_geometry(760, 480, level)
+            ancho = int(geom.split("x")[0])
 
-        # ── Header oscuro ─────────────────────────────────────────────
-        header = ctk.CTkFrame(dlg, fg_color=Palette.BG_SIDEBAR, corner_radius=6, height=36)
-        header.pack(fill="x", padx=12, pady=(12, 0))
-        header.pack_propagate(False)
+            dlg = ctk.CTkToplevel(self)
+            dlg.title("Comparación — Coordinación vs Excel")
+            dlg.transient(self)
+            dlg.resizable(False, False)
 
-        for col_i, txt in enumerate(["Campo", "PDF (Coordinación)", "Excel (Choferes)"]):
-            w = 280 if col_i > 0 else 120
-            ctk.CTkLabel(
-                header, text=txt, width=w,
-                font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-                text_color=Palette.TEXT_SECONDARY,
-            ).pack(side="left", padx=(12, 0))
+            # ── Top bar: header + font level override ──────────────────
+            top_bar = ctk.CTkFrame(dlg, fg_color=Palette.BG_SIDEBAR, corner_radius=6, height=36)
+            top_bar.pack(fill="x", padx=12, pady=(12, 0))
+            top_bar.pack_propagate(False)
 
-        # ── Cuerpo scrollable ─────────────────────────────────────────
-        scroll = ctk.CTkScrollableFrame(dlg, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=12, pady=8)
-
-        for campo, c in comps.items():
-            etq = etiquetas.get(campo, campo)
-            v_pdf = c["pdf"] or "—"
-            v_xls = c["excel"] or "—"
-            ok = c["match"]
-
-            bg = "#C8FFC8" if ok else "#FFC8C8"
-            fg = "#006400" if ok else "#8B0000"
-
-            row = ctk.CTkFrame(scroll, fg_color="transparent")
-            row.pack(fill="x", pady=1)
-
-            ctk.CTkLabel(
-                row, text=etq, width=120, anchor="w",
-                font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-                text_color=Palette.TEXT_PRIMARY,
-            ).pack(side="left", padx=(4, 0))
-
-            for val in [v_pdf, v_xls]:
+            for col_i, txt in enumerate(["Campo", "PDF (Coordinación)", "Excel (Choferes)"]):
                 lbl = ctk.CTkLabel(
-                    row, text=val, width=280, anchor="center",
-                    font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-                    fg_color=bg, text_color=fg, corner_radius=4,
+                    top_bar, text=txt, width=120 if col_i == 0 else 280,
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
+                    text_color=Palette.TEXT_SECONDARY,
                 )
-                lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+                kwargs = {"side": "left", "padx": 4}
+                if col_i > 0:
+                    kwargs["fill"] = "x"
+                    kwargs["expand"] = True
+                lbl.pack(**kwargs)
 
-        # ── Leyenda al pie (centrada) ─────────────────────────────────
-        leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
-        leyenda.pack(fill="x", pady=(0, 12))
-        inner = ctk.CTkFrame(leyenda, fg_color="transparent")
-        inner.pack(anchor="center")
-        # Círculo verde
-        ctk.CTkLabel(
-            inner, text="", width=14, height=14,
-            fg_color="#C8FFC8", corner_radius=7,
-        ).pack(side="left", padx=(4, 2))
-        ctk.CTkLabel(
-            inner, text="Coincide",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 14))
-        # Círculo rojo
-        ctk.CTkLabel(
-            inner, text="", width=14, height=14,
-            fg_color="#FFC8C8", corner_radius=7,
-        ).pack(side="left", padx=(4, 2))
-        ctk.CTkLabel(
-            inner, text="Difiere",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 14))
+            # Font level override selector
+            override_menu = ctk.CTkOptionMenu(
+                top_bar, values=["1", "2", "3"],
+                font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+                fg_color=Palette.BG_INPUT, button_color=Palette.ACCENT,
+                width=50, height=26,
+                command=lambda v: (dlg.destroy(), _build_popup(int(v))),
+            )
+            override_menu.set(str(level))
+            override_menu.pack(side="right", padx=(0, 8))
+
+            # ── Cuerpo: frame normal sin scroll ─────────────────────────
+            body = ctk.CTkFrame(dlg, fg_color="transparent")
+            body.pack(fill="x", padx=12, pady=8)
+
+            for campo, c in comps.items():
+                etq = etiquetas.get(campo, campo)
+                v_pdf = c["pdf"] or "—"
+                v_xls = c["excel"] or "—"
+                ok = c["match"]
+
+                bg = "#C8FFC8" if ok else "#FFC8C8"
+                fg = "#006400" if ok else "#8B0000"
+
+                row = ctk.CTkFrame(body, fg_color="transparent")
+                row.pack(fill="x", pady=1)
+
+                ctk.CTkLabel(
+                    row, text=etq, width=120, anchor="w",
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"], weight="bold"),
+                    text_color=Palette.TEXT_PRIMARY,
+                ).pack(side="left", padx=(4, 0))
+
+                for val in [v_pdf, v_xls]:
+                    lbl = ctk.CTkLabel(
+                        row, text=val, width=280, anchor="center",
+                        font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
+                        fg_color=bg, text_color=fg, corner_radius=4,
+                    )
+                    lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+
+            # ── Leyenda al pie (centrada) ─────────────────────────────
+            leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
+            leyenda.pack(fill="x", pady=(0, 12))
+            inner = ctk.CTkFrame(leyenda, fg_color="transparent")
+            inner.pack(anchor="center")
+            ctk.CTkLabel(
+                inner, text="", width=14, height=14,
+                fg_color="#C8FFC8", corner_radius=7,
+            ).pack(side="left", padx=(4, 2))
+            ctk.CTkLabel(
+                inner, text="Coincide",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["legend"]),
+                text_color=Palette.TEXT_MUTED,
+            ).pack(side="left", padx=(0, 14))
+            ctk.CTkLabel(
+                inner, text="", width=14, height=14,
+                fg_color="#FFC8C8", corner_radius=7,
+            ).pack(side="left", padx=(4, 2))
+            ctk.CTkLabel(
+                inner, text="Difiere",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["legend"]),
+                text_color=Palette.TEXT_MUTED,
+            ).pack(side="left", padx=(0, 14))
+
+            # Ajustar ventana al contenido real
+            dlg.update_idletasks()
+            alto = dlg.winfo_reqheight()
+            x = (dlg.winfo_screenwidth() - ancho) // 2
+            y = (dlg.winfo_screenheight() - alto) // 2
+            dlg.geometry(f"{ancho}x{alto}+{x}+{y}")
+
+        _build_popup(self.config.get("font_level", 1))
 
 
     def _control_final_seleccionar(self):
@@ -8390,133 +8466,150 @@ class App(ctk.CTk):
         modo = datos.get("modo", "flexi")
         aduana_header = "MIC/DTA" if modo == "terrestre" else "Salida Aduana"
 
-        dlg = ctk.CTkToplevel(self)
-        dlg.title("Comparación — Control Final")
-        ancho, alto = 700, 420
-        dlg.geometry(f"{ancho}x{alto}")
-        dlg.transient(self)
-        dlg.grab_set()
-        dlg.resizable(False, False)
-        dlg.update_idletasks()
-        x = (dlg.winfo_screenwidth() - ancho) // 2
-        y = (dlg.winfo_screenheight() - alto) // 2
-        dlg.geometry(f"{ancho}x{alto}+{x}+{y}")
+        def _build_popup(level):
+            fsizes = self._get_font_sizes(level)
+            geom = self._get_popup_geometry(700, 420, level)
+            ancho = int(geom.split("x")[0])
 
-        # Headers: Campo | Ticket | Aduana | Excel
-        header = ctk.CTkFrame(dlg, fg_color=Palette.BG_SIDEBAR, corner_radius=6, height=36)
-        header.pack(fill="x", padx=12, pady=(12, 0))
-        header.pack_propagate(False)
+            dlg = ctk.CTkToplevel(self)
+            dlg.title("Comparación — Control Final")
+            dlg.transient(self)
+            dlg.grab_set()
+            dlg.resizable(False, False)
 
-        widths = [100, 160, 160, 160]
-        for col_i, txt in enumerate(["Campo", "Ticket (OCR)", aduana_header, "Contenedor (Excel)"]):
-            lbl = ctk.CTkLabel(
-                header, text=txt, width=widths[col_i] if col_i > 0 else 100,
-                font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-                text_color=Palette.TEXT_SECONDARY,
+            # ── Top bar: header + font level override ──────────────────
+            top_bar = ctk.CTkFrame(dlg, fg_color=Palette.BG_SIDEBAR, corner_radius=6, height=36)
+            top_bar.pack(fill="x", padx=12, pady=(12, 0))
+            top_bar.pack_propagate(False)
+
+            for col_i, txt in enumerate(["Campo", "Ticket (OCR)", aduana_header, "Contenedor (Excel)"]):
+                lbl = ctk.CTkLabel(
+                    top_bar, text=txt, width=100 if col_i == 0 else 160,
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
+                    text_color=Palette.TEXT_SECONDARY,
+                )
+                kwargs = {"side": "left", "padx": 4}
+                if col_i > 0:
+                    kwargs["fill"] = "x"
+                    kwargs["expand"] = True
+                lbl.pack(**kwargs)
+
+            # Font level override selector
+            override_menu = ctk.CTkOptionMenu(
+                top_bar, values=["1", "2", "3"],
+                font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+                fg_color=Palette.BG_INPUT, button_color=Palette.ACCENT,
+                width=50, height=26,
+                command=lambda v: (dlg.destroy(), _build_popup(int(v))),
             )
-            kwargs = {"side": "left", "padx": (8, 0)}
-            if col_i > 0:
-                kwargs["fill"] = "x"
-                kwargs["expand"] = True
-            lbl.pack(**kwargs)
+            override_menu.set(str(level))
+            override_menu.pack(side="right", padx=(0, 8))
 
-        scroll = ctk.CTkScrollableFrame(dlg, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=12, pady=8)
+            # Cuerpo: frame normal sin scroll
+            body = ctk.CTkFrame(dlg, fg_color="transparent")
+            body.pack(fill="x", padx=12, pady=8)
 
-        if modo == "terrestre":
-            campos = [
-                ("Patente", "Patente", "Patente Camión"),
-                ("Semirremolque", "Semirremolque", "Patente Semi"),
-                ("Conductor", "Conductor", "Conductor Aduana"),
-                ("DNI", "DNI", "DNI"),
-                ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
-                ("Tara (kg)", "Tara (kg)", None),
-                ("Contenedor", "Contenedor", "Contenedor"),
-                ("Permiso", "Permiso", "Id Destinación"),
-                ("Precinto", "Precinto", "Precinto"),
-            ]
-        else:
-            campos = [
-                ("Patente", "Patente", "Patente Camión"),
-                ("Semirremolque", "Semirremolque", "Patente Semi"),
-                ("Conductor", "Conductor", "Conductor Aduana"),
-                ("DNI", "DNI", "CUIL"),
-                ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
-                ("Tara (kg)", "Tara (kg)", None),
-                ("Contenedor", "Contenedor", "Contenedor"),
-                ("Permiso", "Permiso", "Id Destinación"),
-                ("Precinto", "Precinto", "Precinto"),
-            ]
-
-        # Campos con coloreado individual por celda (mayoría decide)
-        campos_mayoria = {"Patente", "Semirremolque", "DNI",
-                          "Neto (kg)", "Contenedor", "Permiso"}
-
-        for campo, key_ticket, key_aduana in campos:
-            val_ticket = datos["ticket"].get(key_ticket, "")
-            val_cont = datos["contenedor"].get(key_ticket, "")
-            val_aduana = datos["aduana"].get(key_aduana, "—") if key_aduana else "—"
-            ok = datos["ok"].get(key_ticket, False)
-
-            vals_list = [str(val_ticket), str(val_aduana), str(val_cont)]
-
-            if campo in campos_mayoria:
-                # Coloreado individual: cada celda se pinta según mayoría
-                colors = []
-                for v in vals_list:
-                    count = sum(1 for x in vals_list if x == v)
-                    if count >= 2:
-                        colors.append(("#C8FFC8", "#006400"))  # verde
-                    else:
-                        colors.append(("#FFC8C8", "#8B0000"))  # rojo
+            if modo == "terrestre":
+                campos = [
+                    ("Camion", "Patente", "Patente Camión"),
+                    ("Semi", "Semirremolque", "Patente Semi"),
+                    ("Conductor", "Conductor", "Conductor Aduana"),
+                    ("DNI", "DNI", "DNI"),
+                    ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
+                    ("Tara (kg)", "Tara (kg)", None),
+                    ("Contenedor", "Contenedor", "Contenedor"),
+                    ("Permiso", "Permiso", "Id Destinación"),
+                    ("Precinto", "Precinto", "Precinto"),
+                ]
             else:
-                # Coloreado grupal: todas las celdas igual (regla actual)
-                bg = "#C8FFC8" if ok else "#FFC8C8"
-                fg = "#006400" if ok else "#8B0000"
-                colors = [(bg, fg)] * 3
+                campos = [
+                    ("Camion", "Patente", "Patente Camión"),
+                    ("Semi", "Semirremolque", "Patente Semi"),
+                    ("Conductor", "Conductor", "Conductor Aduana"),
+                    ("DNI", "DNI", "CUIL"),
+                    ("Neto (kg)", "Neto (kg)", "Peso Bruto Aduana"),
+                    ("Tara (kg)", "Tara (kg)", None),
+                    ("Contenedor", "Contenedor", "Contenedor"),
+                    ("Permiso", "Permiso", "Id Destinación"),
+                    ("Precinto", "Precinto", "Precinto"),
+                ]
 
-            row = ctk.CTkFrame(scroll, fg_color="transparent")
-            row.pack(fill="x", pady=1)
+            # Campos con coloreado individual por celda (mayoría decide)
+            campos_mayoria = {"Camion", "Semi", "DNI",
+                              "Neto (kg)", "Contenedor", "Permiso"}
+
+            for campo, key_ticket, key_aduana in campos:
+                val_ticket = datos["ticket"].get(key_ticket, "")
+                val_cont = datos["contenedor"].get(key_ticket, "")
+                val_aduana = datos["aduana"].get(key_aduana, "—") if key_aduana else "—"
+                ok = datos["ok"].get(key_ticket, False)
+
+                vals_list = [str(val_ticket), str(val_aduana), str(val_cont)]
+
+                if campo in campos_mayoria:
+                    colors = []
+                    for v in vals_list:
+                        count = sum(1 for x in vals_list if x == v)
+                        if count >= 2:
+                            colors.append(("#C8FFC8", "#006400"))
+                        else:
+                            colors.append(("#FFC8C8", "#8B0000"))
+                else:
+                    bg = "#C8FFC8" if ok else "#FFC8C8"
+                    fg = "#006400" if ok else "#8B0000"
+                    colors = [(bg, fg)] * 3
+
+                row = ctk.CTkFrame(body, fg_color="transparent")
+                row.pack(fill="x", pady=1)
+
+                ctk.CTkLabel(
+                    row, text=campo, width=100, anchor="w",
+                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"], weight="bold"),
+                    text_color=Palette.TEXT_PRIMARY,
+                ).pack(side="left", padx=(4, 0))
+
+                for val, (bg, fg) in zip(vals_list, colors):
+                    lbl = ctk.CTkLabel(
+                        row, text=val, width=160, anchor="center",
+                        font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
+                        fg_color=bg, text_color=fg, corner_radius=4,
+                    )
+                    lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+
+            # Legend
+            leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
+            leyenda.pack(fill="x", pady=(0, 12))
+            inner = ctk.CTkFrame(leyenda, fg_color="transparent")
+            inner.pack(anchor="center")
 
             ctk.CTkLabel(
-                row, text=campo, width=100, anchor="w",
-                font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
-                text_color=Palette.TEXT_PRIMARY,
-            ).pack(side="left", padx=(4, 0))
+                inner, text="", width=14, height=14,
+                fg_color="#C8FFC8", corner_radius=7,
+            ).pack(side="left", padx=(4, 2))
+            ctk.CTkLabel(
+                inner, text="Coincide",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["legend"]),
+                text_color=Palette.TEXT_MUTED,
+            ).pack(side="left", padx=(0, 14))
 
-            for val, (bg, fg) in zip(vals_list, colors):
-                lbl = ctk.CTkLabel(
-                    row, text=val, width=160, anchor="center",
-                    font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-                    fg_color=bg, text_color=fg, corner_radius=4,
-                )
-                lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+            ctk.CTkLabel(
+                inner, text="", width=14, height=14,
+                fg_color="#FFC8C8", corner_radius=7,
+            ).pack(side="left", padx=(4, 2))
+            ctk.CTkLabel(
+                inner, text="Diferencia",
+                font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["legend"]),
+                text_color=Palette.TEXT_MUTED,
+            ).pack(side="left", padx=(0, 14))
 
-        # Legend
-        leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
-        leyenda.pack(fill="x", pady=(0, 12))
-        inner = ctk.CTkFrame(leyenda, fg_color="transparent")
-        inner.pack(anchor="center")
+            # Ajustar ventana al contenido real
+            dlg.update_idletasks()
+            alto = dlg.winfo_reqheight()
+            x = (dlg.winfo_screenwidth() - ancho) // 2
+            y = (dlg.winfo_screenheight() - alto) // 2
+            dlg.geometry(f"{ancho}x{alto}+{x}+{y}")
 
-        ctk.CTkLabel(
-            inner, text="", width=14, height=14,
-            fg_color="#C8FFC8", corner_radius=7,
-        ).pack(side="left", padx=(4, 2))
-        ctk.CTkLabel(
-            inner, text="Coincide",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 14))
-
-        ctk.CTkLabel(
-            inner, text="", width=14, height=14,
-            fg_color="#FFC8C8", corner_radius=7,
-        ).pack(side="left", padx=(4, 2))
-        ctk.CTkLabel(
-            inner, text="Diferencia",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
-        ).pack(side="left", padx=(0, 14))
+        _build_popup(self.config.get("font_level", 1))
 
     def _cargar_datos_seleccionar_pdfs(self):
         from tkinter import filedialog as tk_filedialog
@@ -9585,6 +9678,7 @@ class App(ctk.CTk):
             ("valores", "💰  Valores"),
             ("seguridad", "🔒  Seguridad"),
             ("ocr", "🤖  OCR"),
+            ("apariencia", "🎨  Apariencia"),
         ]
 
         def cambiar_tab(nombre):
@@ -9650,6 +9744,7 @@ class App(ctk.CTk):
             "valores": self._ajustes_tab_valores,
             "seguridad": self._ajustes_tab_seguridad,
             "ocr": self._ajustes_tab_ocr,
+            "apariencia": self._ajustes_tab_apariencia,
         }
         # Solo construir el tab Correo (visible por defecto)
         self._ajustes_tab_correo(self._ajustes_frames["correo"])
@@ -9676,6 +9771,43 @@ class App(ctk.CTk):
             text_color=Palette.SUCCESS,
         )
         self._ajustes_lbl_status.pack(side="left", padx=8)
+
+    def _ajustes_tab_apariencia(self, parent):
+        """Tab Apariencia en Ajustes: configuración visual (tamaño de fuentes en popups)."""
+        self._ajustes_seccion(parent, "Tamaño de Tablas Comparativas")
+
+        ctk.CTkLabel(
+            parent,
+            text="Ajusta el tamaño de fuente de las ventanas de comparación (Tickets, Coordinación, Final). "
+                 "El nivel se aplica al reiniciar o abrir un popup.",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=Palette.TEXT_MUTED,
+            wraplength=480,
+            justify="left",
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+
+        # Font level selector
+        font_level_row = ctk.CTkFrame(parent, fg_color="transparent")
+        font_level_row.pack(fill="x", padx=14, pady=3)
+        ctk.CTkLabel(
+            font_level_row, text="Tamaño de tablas (1-3)",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=Palette.TEXT_SECONDARY,
+        ).pack(anchor="w")
+        self._ent_font_level = ctk.CTkOptionMenu(
+            font_level_row,
+            values=["1", "2", "3"],
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_INPUT, button_color=Palette.ACCENT,
+            button_hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.TEXT_PRIMARY,
+            dropdown_fg_color=Palette.BG_CARD,
+            dropdown_hover_color=Palette.BG_HOVER,
+            dropdown_text_color=Palette.TEXT_PRIMARY,
+            width=80, height=30,
+        )
+        self._ent_font_level.set(str(self.config.get("font_level", 1)))
+        self._ent_font_level.pack(anchor="w", pady=(2, 0))
 
     # ── Helpers de layout ────────────────────────────────────────────
     def _ajustes_seccion(self, parent, titulo):
@@ -10510,6 +10642,14 @@ class App(ctk.CTk):
                 model_states[attr_name] = widget.get() == 1
             if model_states:
                 self.config["api_vision"]["parallel_model_states"] = model_states
+
+            # Apariencia — font level
+            w = _g('_ent_font_level')
+            if w is not None:
+                try:
+                    self.config["font_level"] = int(w.get())
+                except (ValueError, TypeError):
+                    self.config["font_level"] = 1
 
             self._guardar_config()
             self._ajustes_lbl_status.configure(text="✓ Configuración guardada correctamente.")

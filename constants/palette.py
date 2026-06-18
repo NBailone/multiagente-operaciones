@@ -57,3 +57,7 @@ class Palette:
 # ── Fuentes ──────────────────────────────────────────────────────────────────
 FONT_FAMILY = "Segoe UI"
 FONT_MONO  = "Consolas"
+
+# ── Font scale levels for comparison popups ──────────────────────────────────
+FONT_LEVEL_SCALES = {1: 1.0, 2: 1.25, 3: 1.5}
+FONT_BASE_SIZES = {"data": 11, "header": 12, "legend": 11}
