@@ -19,10 +19,13 @@ Dependencias:
     brew install tesseract poppler                              (Mac)
 """
 
+import concurrent.futures
+import queue
 import re
 import subprocess
 import sys
 import tempfile
+import threading
 from pathlib import Path
 
 import json
@@ -1823,6 +1826,192 @@ Si un campo no se ve, dejalo como string vacío. No inventes datos."""
         return {"error": "timeout"}
     except Exception as e:
         return {"error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# API Vision Paralelo con Fallback
+# ---------------------------------------------------------------------------
+
+class _ResultCollector:
+    """Thread-safe collector for parallel API Vision results."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._datos = {}
+        self._textos = {}
+
+    def add_datos(self, stem: str, data: dict):
+        with self._lock:
+            self._datos[stem] = data
+
+    def add_texto(self, stem: str, texto: str):
+        with self._lock:
+            self._textos[stem] = texto
+
+    def get(self) -> dict:
+        with self._lock:
+            return {"datos": dict(self._datos), "textos": dict(self._textos)}
+
+
+def _process_pdf_with_model(
+    ruta_pdf: str,
+    model: str,
+    api_key: str,
+    temperature: float,
+    max_tokens: int,
+    timeout: int,
+    api_base: str,
+    collector: _ResultCollector,
+    retry_queue: queue.Queue,
+    tried_models: set,
+    log_callback,
+):
+    """Process a single PDF with a specific model. On failure, enqueue for retry."""
+    stem = os.path.splitext(os.path.basename(ruta_pdf))[0]
+    try:
+        resultado = api_vision_extraer_datos(
+            ruta_pdf, api_key, model=model,
+            temperature=temperature, max_tokens=max_tokens,
+            timeout=timeout, api_base=api_base,
+        )
+        if "error" in resultado:
+            raise Exception(resultado["error"])
+        collector.add_datos(stem, resultado)
+        # NOTE: NO add to textos here — textos is ONLY for PaddleOCR fallback results
+        if log_callback:
+            log_callback(f"[API Vision Paralelo] {model} procesó {stem} OK")
+    except Exception as e:
+        if log_callback:
+            # Extract short error message from verbose HTTP responses
+            err_msg = str(e)
+            if "is not a valid model ID" in err_msg:
+                err_msg = "modelo no disponible"
+            elif "429" in err_msg or "rate" in err_msg.lower() or "Rate limit" in err_msg:
+                err_msg = "rate limit"
+            elif "401" in err_msg or "403" in err_msg:
+                err_msg = "API key inválida"
+            elif "timeout" in err_msg.lower():
+                err_msg = "timeout"
+            elif err_msg.startswith("HTTP "):
+                # Extract just the status code
+                err_msg = err_msg.split(":")[0] if ":" in err_msg else err_msg[:30]
+            # Short PDF name: getjobid65902.pdf → getjobid65902
+            pdf_name = os.path.splitext(os.path.basename(ruta_pdf))[0]
+            log_callback(f"[API Vision Paralelo] ERROR {model} falló para {pdf_name}: {err_msg}")
+        tried_models.add(model)
+        retry_queue.put((ruta_pdf, tried_models))
+
+
+def api_vision_con_fallback(
+    rutas_pdfs: list,
+    api_key: str,
+    modelos: list,
+    temperature: float = 0.1,
+    max_tokens: int = 8192,
+    timeout: int = 60,
+    api_base: str = OPENROUTER_BASE,
+    log_callback=None,
+) -> dict:
+    """Distribute PDFs across multiple API vision models with retry and fallback.
+
+    Round-robin distributes PDFs. Failed PDFs retry with other models.
+    PaddleOCR fallback triggers only when ALL models fail for a PDF.
+
+    Returns: {"datos": {stem: dict}, "textos": {stem: str}, "logs": list[str]}
+    """
+    logs = []
+
+    def _log(msg):
+        logs.append(msg)
+        if log_callback:
+            log_callback(msg)
+
+    if not modelos:
+        _log("[API Vision Paralelo] No hay modelos habilitados, usando PaddleOCR")
+        textos = {}
+        for ruta in rutas_pdfs:
+            stem = os.path.splitext(os.path.basename(ruta))[0]
+            texto = pdf_a_texto(ruta, engine="paddleocr")
+            textos[stem] = texto
+        return {"datos": {}, "textos": textos, "logs": logs}
+
+    if not api_key:
+        _log("[API Vision Paralelo] No hay API Key, usando PaddleOCR")
+        textos = {}
+        for ruta in rutas_pdfs:
+            stem = os.path.splitext(os.path.basename(ruta))[0]
+            texto = pdf_a_texto(ruta, engine="paddleocr")
+            textos[stem] = texto
+        return {"datos": {}, "textos": textos, "logs": logs}
+
+    total = len(rutas_pdfs)
+    _log(f"[API Vision Paralelo] Distribuyendo {total} PDFs entre {len(modelos)} modelos")
+
+    # Round-robin assignment
+    model_pdfs = {m: [] for m in modelos}
+    for i, ruta in enumerate(rutas_pdfs):
+        model_pdfs[modelos[i % len(modelos)]].append(ruta)
+
+    for m, pdfs in model_pdfs.items():
+        _log(f"[API Vision Paralelo] {m}: {len(pdfs)} PDFs asignados")
+
+    collector = _ResultCollector()
+    retry_queue = queue.Queue()
+
+    # Initial parallel pass
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(modelos)) as executor:
+        futures = []
+        for m, pdfs in model_pdfs.items():
+            for ruta in pdfs:
+                f = executor.submit(
+                    _process_pdf_with_model,
+                    ruta, m, api_key, temperature, max_tokens,
+                    timeout, api_base, collector, retry_queue,
+                    set(), log_callback,
+                )
+                futures.append(f)
+        concurrent.futures.wait(futures)
+
+    # Retry loop: failed PDFs with exclusion set
+    while not retry_queue.empty():
+        ruta_pdf, tried_models = retry_queue.get()
+        stem = os.path.splitext(os.path.basename(ruta_pdf))[0]
+
+        # Check if already collected (success from another thread)
+        existing = collector.get()
+        if stem in existing["datos"]:
+            continue
+
+        available = [m for m in modelos if m not in tried_models]
+        if not available:
+            _log(f"[API Vision Paralelo] Todos los modelos fallaron para {stem}, usando PaddleOCR")
+            texto = pdf_a_texto(ruta_pdf, engine="paddleocr")
+            collector.add_texto(stem, texto)
+            continue
+
+        next_model = available[0]
+        _log(f"[API Vision Paralelo] Reintentando {stem} con {next_model}...")
+        _process_pdf_with_model(
+            ruta_pdf, next_model, api_key, temperature, max_tokens,
+            timeout, api_base, collector, retry_queue,
+            tried_models, log_callback,
+        )
+
+    # Final fallback: any stem still missing → PaddleOCR
+    result = collector.get()
+    for ruta in rutas_pdfs:
+        stem = os.path.splitext(os.path.basename(ruta))[0]
+        if stem not in result["datos"] and stem not in result["textos"]:
+            _log(f"[API Vision Paralelo] {stem} sin resultado, usando PaddleOCR")
+            texto = pdf_a_texto(ruta, engine="paddleocr")
+            collector.add_texto(stem, texto)
+
+    result = collector.get()
+    api_ok = len(result["datos"])
+    local_ok = len(result["textos"])
+    _log(f"[API Vision Paralelo] Completado: {api_ok}/{total} API, {local_ok}/{total} PaddleOCR")
+
+    return result
 
 
 # ---------------------------------------------------------------------------

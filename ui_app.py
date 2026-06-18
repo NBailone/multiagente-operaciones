@@ -7702,18 +7702,66 @@ class App(ctk.CTk):
                 api_key_raw = api_vision_conf.get("api_key", "")
                 api_key = self._decrypt_api_key(api_key_raw)
                 model = api_vision_conf.get("model", procesar_tickets.MODELO_VISION_DEFAULT)
-                for ruta in tickets_pdf:
-                    stem = os.path.basename(ruta)
-                    self._log(f"  API Visión: {stem}")
-                    datos = procesar_tickets.api_vision_extraer_datos(
-                        ruta, api_key, model=model
+                parallel_enabled = api_vision_conf.get("parallel_enabled", False)
+
+                if parallel_enabled and len(tickets_pdf) > 1:
+                    # Parallel mode: distribute across enabled models
+                    model_states = api_vision_conf.get("parallel_model_states", {})
+                    enabled_models = [m for m, on in model_states.items() if on]
+                    if not enabled_models:
+                        enabled_models = [model]
+                    # Ensure selected model is first
+                    if model in enabled_models:
+                        enabled_models.remove(model)
+                    enabled_models.insert(0, model)
+                    temperature = api_vision_conf.get("temperature", 0.1)
+                    max_tokens = api_vision_conf.get("max_tokens", 4000)
+                    timeout = api_vision_conf.get("timeout", 60)
+                    result = procesar_tickets.api_vision_con_fallback(
+                        tickets_pdf, api_key, enabled_models,
+                        temperature=temperature, max_tokens=max_tokens,
+                        timeout=timeout, log_callback=self._log,
                     )
-                    if "error" in datos:
-                        self._log(f"  ⚠ API Visión falló: {datos['error']}, usando OCR local")
-                        texto = procesar_tickets.pdf_a_texto(ruta, engine="paddleocr")
-                        textos_por_pdf[stem] = texto
-                    else:
-                        api_datos_raw[stem] = datos
+                    api_datos_raw = result["datos"]
+                    textos_por_pdf = result["textos"]
+                else:
+                    # Sequential fallback: try models one by one per PDF
+                    all_models = api_vision_conf.get("custom_models", [])
+                    if not all_models:
+                        all_models = list(procesar_tickets.MODELOS_VISION)
+                    # Ensure selected model is first
+                    if model in all_models:
+                        all_models.remove(model)
+                    all_models.insert(0, model)
+
+                    self._log(f"[Control Final] API Visión secuencial: {len(tickets_pdf)} PDF(s), {len(all_models)} modelo(s)")
+                    for ruta in tickets_pdf:
+                        stem = os.path.splitext(os.path.basename(ruta))[0]
+                        self._log(f"  API Visión: {stem}")
+                        success = False
+                        for m in all_models:
+                            datos = procesar_tickets.api_vision_extraer_datos(
+                                ruta, api_key, model=m
+                            )
+                            if "error" in datos:
+                                err = datos["error"]
+                                if "is not a valid model ID" in err:
+                                    err = "modelo no disponible"
+                                elif "429" in err or "rate" in err.lower():
+                                    err = "rate limit"
+                                elif "timeout" in err.lower():
+                                    err = "timeout"
+                                self._log(f"  ERROR {m}: {err}")
+                                continue
+                            # Success
+                            api_datos_raw[stem] = datos
+                            self._log(f"  ✓ {stem} procesado con {m}")
+                            success = True
+                            break
+                        if not success:
+                            self._log(f"  ⚠ Todos los modelos fallaron para {stem}, usando PaddleOCR")
+                            texto = procesar_tickets.pdf_a_texto(ruta, engine="paddleocr")
+                            textos_por_pdf[stem] = texto
             else:
                 textos_por_pdf = procesar_tickets.pdfs_a_texto_batch(tickets_pdf, engine="paddleocr")
 
@@ -7759,7 +7807,7 @@ class App(ctk.CTk):
 
                 todos_pdfs = set(tickets_pdf)
                 for ruta in todos_pdfs:
-                    stem = os.path.basename(ruta)
+                    stem = os.path.splitext(os.path.basename(ruta))[0]
                     try:
                         if stem in api_datos_raw:
                             raw = api_datos_raw[stem]
@@ -7902,7 +7950,7 @@ class App(ctk.CTk):
 
                 todos_pdfs = set(tickets_pdf)
                 for ruta in todos_pdfs:
-                    stem = os.path.basename(ruta)
+                    stem = os.path.splitext(os.path.basename(ruta))[0]
                     try:
                         if stem in api_datos_raw:
                             raw = api_datos_raw[stem]
@@ -9256,36 +9304,77 @@ class App(ctk.CTk):
                 temperature = api_vision_conf.get("temperature", 0.1)
                 max_tokens = api_vision_conf.get("max_tokens", 4000)
                 timeout = api_vision_conf.get("timeout", 60)
+                parallel_enabled = api_vision_conf.get("parallel_enabled", False)
 
-                self.log_queue.put(f"[{timestamp}] [Control Datos] API Visión ({model}): {total} PDF(s)...")
-                for i, ruta in enumerate(rutas):
-                    stem = os.path.splitext(os.path.basename(ruta))[0]
-                    self.log_queue.put(f"[{timestamp}] [Control Datos]   [{i+1}/{total}] {stem}")
-                    try:
-                        datos = procesar_tickets.api_vision_extraer_datos(
-                            ruta, api_key, model=model,
-                            temperature=temperature, max_tokens=max_tokens,
-                            timeout=timeout,
-                        )
-                        if "error" in datos:
-                            if datos["error"] == "timeout":
-                                self.log_queue.put(f"[{timestamp}] [Control Datos]   ⚠ Timeout API, pasando a local...")
-                                textos_local = procesar_tickets.pdfs_a_texto_batch([ruta], engine="paddleocr")
-                                textos_por_pdf[stem] = textos_local.get(stem, "")
-                            else:
-                                self.log_queue.put(f"[{timestamp}] [Control Datos]   ⚠ Error API: {datos['error']}, pasando a local...")
-                                textos_local = procesar_tickets.pdfs_a_texto_batch([ruta], engine="paddleocr")
-                                textos_por_pdf[stem] = textos_local.get(stem, "")
-                        else:
-                            # Guardar dict crudo para mapeo directo (evita extraer_datos)
-                            api_datos_raw[stem] = datos
-                            # También guardar texto para compatibilidad
-                            texto_simulado = "\n".join(f"{k}: {v}" for k, v in datos.items() if v)
-                            textos_por_pdf[stem] = texto_simulado
-                    except Exception as e:
-                        self.log_queue.put(f"[{timestamp}] [Control Datos]   ⚠ Error: {e}, pasando a local...")
-                        textos_local = procesar_tickets.pdfs_a_texto_batch([ruta], engine="paddleocr")
-                        textos_por_pdf[stem] = textos_local.get(stem, "")
+                if parallel_enabled and total > 1:
+                    # Parallel mode: distribute across enabled models
+                    model_states = api_vision_conf.get("parallel_model_states", {})
+                    enabled_models = [m for m, on in model_states.items() if on]
+                    if not enabled_models:
+                        enabled_models = [model]
+                    # Ensure selected model is first
+                    if model in enabled_models:
+                        enabled_models.remove(model)
+                    enabled_models.insert(0, model)
+
+                    def _log_fn(msg):
+                        self.log_queue.put(f"[{timestamp}] {msg}")
+
+                    self.log_queue.put(f"[{timestamp}] [Control Datos] API Visión paralelo: {total} PDF(s), {len(enabled_models)} modelo(s)...")
+                    result = procesar_tickets.api_vision_con_fallback(
+                        rutas, api_key, enabled_models,
+                        temperature=temperature, max_tokens=max_tokens,
+                        timeout=timeout, log_callback=_log_fn,
+                    )
+                    api_datos_raw = result["datos"]
+                    textos_por_pdf = result["textos"]
+                else:
+                    # Sequential fallback: try models one by one per PDF
+                    all_models = api_vision_conf.get("custom_models", [])
+                    if not all_models:
+                        all_models = list(procesar_tickets.MODELOS_VISION)
+                    # Ensure selected model is first
+                    if model in all_models:
+                        all_models.remove(model)
+                    all_models.insert(0, model)
+
+                    self.log_queue.put(f"[{timestamp}] [Control Datos] API Visión secuencial: {total} PDF(s), {len(all_models)} modelo(s) disponible(s)")
+                    for i, ruta in enumerate(rutas):
+                        stem = os.path.splitext(os.path.basename(ruta))[0]
+                        self.log_queue.put(f"[{timestamp}] [Control Datos]   [{i+1}/{total}] {stem}")
+                        success = False
+                        for m in all_models:
+                            try:
+                                datos = procesar_tickets.api_vision_extraer_datos(
+                                    ruta, api_key, model=m,
+                                    temperature=temperature, max_tokens=max_tokens,
+                                    timeout=timeout,
+                                )
+                                if "error" in datos:
+                                    # Clean error message
+                                    err = datos["error"]
+                                    if "is not a valid model ID" in err:
+                                        err = "modelo no disponible"
+                                    elif "429" in err or "rate" in err.lower():
+                                        err = "rate limit"
+                                    elif "timeout" in err.lower():
+                                        err = "timeout"
+                                    self.log_queue.put(f"[{timestamp}] [Control Datos]   ERROR {m}: {err}")
+                                    continue
+                                # Success
+                                api_datos_raw[stem] = datos
+                                texto_simulado = "\n".join(f"{k}: {v}" for k, v in datos.items() if v)
+                                textos_por_pdf[stem] = texto_simulado
+                                self.log_queue.put(f"[{timestamp}] [Control Datos]   ✓ {stem} procesado con {m}")
+                                success = True
+                                break
+                            except Exception as e:
+                                self.log_queue.put(f"[{timestamp}] [Control Datos]   ERROR {m}: {e}")
+                                continue
+                        if not success:
+                            self.log_queue.put(f"[{timestamp}] [Control Datos]   ⚠ Todos los modelos fallaron para {stem}, usando PaddleOCR")
+                            textos_local = procesar_tickets.pdfs_a_texto_batch([ruta], engine="paddleocr")
+                            textos_por_pdf[stem] = textos_local.get(stem, "")
 
                 vision_ok = len(api_datos_raw)
                 self.log_queue.put(f"[{timestamp}] [Control Datos] API Visión completado: {vision_ok}/{total} PDFs OK")
@@ -9379,10 +9468,12 @@ class App(ctk.CTk):
             return ticket_data, cont_data, ruta_match, pe_val, permiso
 
         # ── 3. Procesar resultados y enviarlos a la UI ──
-        for hechos, (ruta, (stem, texto)) in enumerate(
-                zip(rutas, textos_por_pdf.items()), start=1):
+        for hechos, ruta in enumerate(rutas, start=1):
+            stem = os.path.splitext(os.path.basename(ruta))[0]
+            has_data = stem in api_datos_raw or stem in textos_por_pdf
 
-            if texto:
+            if has_data:
+                texto = textos_por_pdf.get(stem, "")
                 ticket_data, cont_data, ruta_match, pe_val, permiso = \
                     _procesar_texto(stem, texto)
                 nombre = stem
@@ -10128,6 +10219,49 @@ class App(ctk.CTk):
         self._ent_vision_custom_models.bind("<KeyRelease>", lambda e: self._sync_modelos_desde_textbox())
         self._sync_modelos_desde_textbox()
 
+        # ── API Vision en Paralelo ───────────────────────────────────
+        parallel_cfg = self.config.get("api_vision", {})
+        self._chk_parallel_enabled = ctk.CTkCheckBox(
+            parent, text="Habilitar API Vision en Paralelo",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
+            text_color=Palette.TEXT_PRIMARY,
+            command=self._toggle_parallel_panel,
+        )
+        self._chk_parallel_enabled.pack(anchor="w", padx=14, pady=(4, 2))
+        if parallel_cfg.get("parallel_enabled", False):
+            self._chk_parallel_enabled.select()
+
+        # Model panel frame (hidden initially)
+        self._parallel_panel = ctk.CTkFrame(parent, fg_color="transparent")
+        ctk.CTkLabel(
+            self._parallel_panel, text="Modelos para procesamiento paralelo",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=Palette.TEXT_MUTED, anchor="w",
+        ).pack(anchor="w", padx=14, pady=(2, 0))
+        self._parallel_checks_frame = ctk.CTkFrame(self._parallel_panel, fg_color="transparent")
+        self._parallel_checks_frame.pack(anchor="w", padx=14, pady=(0, 4))
+        self._parallel_model_checks = {}
+
+        # Build checkboxes for existing models
+        saved_states = parallel_cfg.get("parallel_model_states", {})
+        for m in modelos:
+            is_enabled = saved_states.get(m, True)
+            chk = ctk.CTkCheckBox(
+                self._parallel_checks_frame, text=m,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
+                text_color=Palette.TEXT_PRIMARY,
+            )
+            chk.pack(anchor="w", padx=2, pady=1)
+            if is_enabled:
+                chk.select()
+            self._parallel_model_checks[m] = chk
+
+        self._toggle_parallel_panel()
+
         # Temperature
         self._ent_vision_temperature = self._ajustes_row(
             parent, "Temperature (0-1)",
@@ -10168,6 +10302,46 @@ class App(ctk.CTk):
                     self._modelo_vision_menu.set(top_current)
                 elif lines:
                     self._modelo_vision_menu.set(lines[0])
+        # Rebuild parallel model checkboxes when model list changes
+        if hasattr(self, '_parallel_model_checks'):
+            self._rebuild_parallel_model_checks()
+
+    # ── Toggle panel de modelos paralelos ───────────────────────────
+    def _toggle_parallel_panel(self):
+        if self._chk_parallel_enabled.get() == 1:
+            self._parallel_panel.pack(anchor="w", padx=0, pady=(0, 4), after=self._chk_parallel_enabled)
+        else:
+            self._parallel_panel.pack_forget()
+
+    # ── Reconstruir checkboxes de modelos paralelos ─────────────────
+    def _rebuild_parallel_model_checks(self):
+        """Rebuild parallel model checkboxes from the textbox content."""
+        raw = self._ent_vision_custom_models.get("1.0", "end-1c")
+        modelos = [l.strip() for l in raw.split("\n") if l.strip()]
+        # Preserve existing states
+        old_states = {}
+        for m, chk in self._parallel_model_checks.items():
+            try:
+                old_states[m] = chk.get() == 1
+            except Exception:
+                old_states[m] = True
+        # Clear frame
+        for w in self._parallel_checks_frame.winfo_children():
+            w.destroy()
+        self._parallel_model_checks = {}
+        for m in modelos:
+            is_enabled = old_states.get(m, True)
+            chk = ctk.CTkCheckBox(
+                self._parallel_checks_frame, text=m,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
+                text_color=Palette.TEXT_PRIMARY,
+            )
+            chk.pack(anchor="w", padx=2, pady=1)
+            if is_enabled:
+                chk.select()
+            self._parallel_model_checks[m] = chk
 
     # ── GUARDAR AJUSTES ──────────────────────────────────────────────
     def _guardar_ajustes(self):
@@ -10326,6 +10500,16 @@ class App(ctk.CTk):
                     api_cfg[cfg_key] = conv(w.get())
             if api_cfg:
                 self.config["api_vision"] = {**self.config.get("api_vision", {}), **api_cfg}
+
+            # Parallel settings
+            w = _g('_chk_parallel_enabled')
+            if w is not None:
+                self.config["api_vision"]["parallel_enabled"] = w.get() == 1
+            model_states = {}
+            for attr_name, widget in getattr(self, '_parallel_model_checks', {}).items():
+                model_states[attr_name] = widget.get() == 1
+            if model_states:
+                self.config["api_vision"]["parallel_model_states"] = model_states
 
             self._guardar_config()
             self._ajustes_lbl_status.configure(text="✓ Configuración guardada correctamente.")
