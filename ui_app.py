@@ -26,7 +26,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import email
 import shutil
+import tempfile
 import dotenv
+from copy import copy
+import zipfile
+import xml.etree.ElementTree as ET
 from PIL import Image
 
 # ── Auto-install UI dependencies ──────────────────────────────────────────
@@ -1816,6 +1820,15 @@ class App(ctk.CTk):
             command=self._popup_editar_excels,
         )
         self.btn_editar_excels.pack(side="left", padx=4, pady=4)
+
+        self.btn_planilla_carga = ctk.CTkButton(
+            toolbar, text="📋 Planilla de Carga",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
+            command=self._popup_planilla_carga,
+        )
+        self.btn_planilla_carga.pack(side="left", padx=4, pady=4)
 
         self.lbl_estado_planillas = ctk.CTkLabel(
             toolbar,
@@ -3923,6 +3936,529 @@ class App(ctk.CTk):
                       fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
                       text_color=Palette.TEXT_PRIMARY, corner_radius=6,
                       command=popup.destroy).pack(pady=(8, 10))
+
+    # ═══════════════════════════════════════════════════════════════════
+    # POPUP: PLANILLA DE CARGA
+    # ═══════════════════════════════════════════════════════════════════
+
+    def _popup_planilla_carga(self):
+        """Popup para extraer la hoja 'Planilla de Carga' de archivos Excel."""
+        if self.tarea_activa:
+            messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución. Espere a que finalice.")
+            return
+
+        escritorio = self._resolver_ruta("planillas_carga", "Desktop")
+        patron = re.compile(r"^\d{2}_\d{2}_\d{4}_\d+_.+$")
+
+        carpetas_encontradas = []
+        try:
+            for item in sorted(os.listdir(escritorio)):
+                ruta = os.path.join(escritorio, item)
+                if os.path.isdir(ruta) and patron.match(item):
+                    carpetas_encontradas.append((item, ruta))
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo leer el escritorio:\n{e}")
+            return
+
+        if not carpetas_encontradas:
+            messagebox.showinfo("Sin carpetas",
+                                "No se encontraron carpetas con formato\n"
+                                "DD_MM_AAAA_NNN_Nombre en el escritorio.")
+            return
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("Planilla de Carga")
+        popup.geometry("600x400")
+        popup.configure(fg_color=Palette.BG_CARD)
+        popup.transient(self)
+        popup.lift()
+        popup.grab_set()
+        popup.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width() - 600) // 2
+        py = self.winfo_y() + (self.winfo_height() - 400) // 2
+        popup.geometry(f"600x400+{px}+{py}")
+
+        ctk.CTkLabel(
+            popup, text="PLANILLA DE CARGA",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+            text_color=Palette.TEXT_PRIMARY,
+        ).pack(pady=(16, 8))
+
+        ctk.CTkLabel(
+            popup, text="Seleccioná las carpetas de las que extraer la hoja:",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13),
+            text_color=Palette.TEXT_SECONDARY,
+        ).pack(anchor="w", padx=16, pady=(0, 6))
+
+        scroll = ctk.CTkScrollableFrame(
+            popup, fg_color=Palette.BG_TABLE, corner_radius=8,
+            border_width=1, border_color=Palette.BORDER,
+        )
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        checks = {}
+        for nombre, ruta_carp in carpetas_encontradas:
+            var = ctk.BooleanVar(value=True)
+            checks[nombre] = var
+
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=16, pady=(0, 12))
+
+        seleccionadas_var = []
+
+        def _obtener_seleccionadas():
+            seleccionadas_var.clear()
+            for nombre, ruta in carpetas_encontradas:
+                if checks[nombre].get():
+                    seleccionadas_var.append(ruta)
+
+        def _update_generar_btn(*_args):
+            any_selected = any(v.get() for v in checks.values())
+            btn_generar.configure(state="normal" if any_selected else "disabled")
+
+        def _seleccionar_todas():
+            for v in checks.values():
+                v.set(True)
+
+        def _borrar_seleccion():
+            for v in checks.values():
+                v.set(False)
+
+        # BotonesSeleccionar todas / Ninguna (izquierda)
+        ctk.CTkButton(
+            btn_frame, text="Todas", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_seleccionar_todas,
+        ).pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(
+            btn_frame, text="Ninguna", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_borrar_seleccion,
+        ).pack(side="left", padx=4)
+
+        btn_generar = ctk.CTkButton(
+            btn_frame, text="Generar", width=140, height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.WHITE, corner_radius=6,
+            state="disabled",
+            command=lambda: (_obtener_seleccionadas(),
+                             self._generar_planilla_carga_thread(popup, seleccionadas_var)),
+        )
+        btn_generar.pack(side="right", padx=4)
+
+        for nombre, var in checks.items():
+            var.trace_add("write", _update_generar_btn)
+            ctk.CTkCheckBox(
+                scroll, text=nombre, variable=var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                text_color=Palette.TEXT_PRIMARY,
+            ).pack(anchor="w", padx=12, pady=4)
+
+        _update_generar_btn()
+
+        ctk.CTkButton(
+            btn_frame, text="Cancelar", width=100, height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=popup.destroy,
+        ).pack(side="right", padx=4)
+
+    def _extraer_planilla_carga(self, folder_path):
+        """Extrae la hoja 'planilla de carga' del primer .xlsx en la carpeta.
+
+        Returns:
+            (success, message)
+        """
+        try:
+            archivos = os.listdir(folder_path)
+        except Exception as e:
+            return False, f"No se pudo leer la carpeta: {e}"
+
+        # Buscar primer archivo Excel con preferencia a *CONTENEDORES*
+        xlsx_preferido = None
+        xlsx_cualquiera = None
+        xls_preferido = None
+        xls_cualquiera = None
+        for archivo in archivos:
+            # Ignorar archivos temporales de Excel (~$xxx.xlsx) — se crean cuando el archivo está abierto
+            if archivo.startswith("~$"):
+                continue
+            up = archivo.upper()
+            ruta = os.path.join(folder_path, archivo)
+            if up.endswith(".XLSX"):
+                if "CONTENEDORES" in up:
+                    xlsx_preferido = ruta
+                if xlsx_cualquiera is None:
+                    xlsx_cualquiera = ruta
+            elif up.endswith(".XLS"):
+                if "CONTENEDORES" in up:
+                    xls_preferido = ruta
+                if xls_cualquiera is None:
+                    xls_cualquiera = ruta
+
+        source_path = xlsx_preferido or xlsx_cualquiera or xls_preferido or xls_cualquiera
+        if not source_path:
+            return False, "No se encontró archivo .xlsx/.xls en la carpeta"
+
+        is_xls = source_path.lower().endswith(".xls") and not source_path.lower().endswith(".xlsx")
+
+        # Cargar workbook y buscar hoja
+        if is_xls:
+            # xlrd 2.0+ no soporta estilos. Usamos win32com para convertir .xls → .xlsx
+            # temporal y luego procesar como .xlsx (preserva formato, fórmulas, protección).
+            import win32com.client as _wincom
+            import pythoncom
+            pythoncom.CoInitialize()
+            excel = None
+            wb_com = None
+            temp_xlsx = None
+            try:
+                excel = _wincom.DispatchEx("Excel.Application")
+                excel.Visible = False
+                excel.DisplayAlerts = False
+                # Workbook-level password "123" may be set on .xls
+                try:
+                    wb_com = excel.Workbooks.Open(source_path, ReadOnly=True, Password="123")
+                except Exception:
+                    wb_com = excel.Workbooks.Open(source_path, ReadOnly=True)
+                # Save as .xlsx (FileFormat 51 = xlOpenXMLWorkbook)
+                temp_xlsx = source_path + ".__temp__.xlsx"
+                if os.path.exists(temp_xlsx):
+                    try:
+                        os.unlink(temp_xlsx)
+                    except OSError:
+                        pass
+                wb_com.SaveAs(temp_xlsx, FileFormat=51)
+                wb_com.Close(SaveChanges=False)
+                wb_com = None
+                excel.Quit()
+                excel = None
+            except Exception as e:
+                return False, f"Error al convertir .xls a .xlsx: {e}"
+            finally:
+                try:
+                    if wb_com:
+                        wb_com.Close(SaveChanges=False)
+                except Exception:
+                    pass
+                try:
+                    if excel:
+                        excel.Quit()
+                except Exception:
+                    pass
+                pythoncom.CoUninitialize()
+
+            if not temp_xlsx or not os.path.exists(temp_xlsx):
+                return False, "No se pudo convertir el archivo .xls a .xlsx"
+
+            # Ahora procesar el .xlsx temporal con openpyxl (data_only para valores cacheados)
+            try:
+                wb = openpyxl.load_workbook(temp_xlsx, data_only=True)
+            except Exception as e:
+                try:
+                    os.unlink(temp_xlsx)
+                except OSError:
+                    pass
+                return False, f"Error al abrir .xls convertido: {e}"
+
+            ws_origen_name = None
+            for sn in wb.sheetnames:
+                if sn.strip().lower() == "planilla de carga":
+                    ws_origen_name = sn
+                    break
+
+            if not ws_origen_name:
+                wb.close()
+                try:
+                    os.unlink(temp_xlsx)
+                except OSError:
+                    pass
+                return False, "No se encontró la hoja 'Planilla de Carga' en .xls"
+
+            ws_origen = wb[ws_origen_name]
+
+            # Resolver XML path del .xlsx temporal para lectura de anchos de columna
+            target_sheet_xml_path = None
+            try:
+                import zipfile as _zf
+                import xml.etree.ElementTree as _ET
+                _NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+                _NS_SHEET = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+                with _zf.ZipFile(temp_xlsx, 'r') as _z:
+                    _wb_xml = _ET.fromstring(_z.read('xl/workbook.xml'))
+                    _sheets = _wb_xml.find(f'{{{_NS_SHEET}}}sheets')
+                    _rid = None
+                    for _s in _sheets:
+                        if (_s.get('name') or '').strip().lower() == 'planilla de carga':
+                            _rid = _s.get(f'{{{_NS_REL}}}id')
+                            break
+                    if _rid:
+                        _rels = _ET.fromstring(_z.read('xl/_rels/workbook.xml.rels'))
+                        for _r in _rels:
+                            if _r.get('Id') == _rid:
+                                target_sheet_xml_path = 'xl/' + _r.get('Target')
+                                break
+            except Exception:
+                target_sheet_xml_path = None
+
+            # Registrar cleanup del temp al final del procesamiento
+            # (se elimina tras guardar el archivo de salida)
+            self._temp_xlsx_to_clean = temp_xlsx
+
+        else:
+            # --- .xlsx path: load with data_only=True to get cached values ---
+            # data_only=True returns cached formula results instead of formula strings.
+            # This avoids #REF errors when the referenced sheets (DATOS, etc.) are removed.
+            try:
+                wb = openpyxl.load_workbook(source_path, data_only=True)
+            except Exception as e:
+                return False, f"Error al abrir .xlsx: {e}"
+
+            ws_origen_name = None
+            for sn in wb.sheetnames:
+                if sn.strip().lower() == "planilla de carga":
+                    ws_origen_name = sn
+                    break
+
+            if not ws_origen_name:
+                wb.close()
+                return False, "No se encontró la hoja 'Planilla de Carga' en .xlsx"
+
+            ws_origen = wb[ws_origen_name]
+
+            # Resolve the sheet's XML path inside the .xlsx ZIP (needed below for column widths)
+            target_sheet_xml_path = None
+            try:
+                import zipfile as _zf
+                import xml.etree.ElementTree as _ET
+                _NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+                _NS_SHEET = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+                with _zf.ZipFile(source_path, 'r') as _z:
+                    _wb_xml = _ET.fromstring(_z.read('xl/workbook.xml'))
+                    _sheets = _wb_xml.find(f'{{{_NS_SHEET}}}sheets')
+                    _rid = None
+                    for _s in _sheets:
+                        if (_s.get('name') or '').strip().lower() == 'planilla de carga':
+                            _rid = _s.get(f'{{{_NS_REL}}}id')
+                            break
+                    if _rid:
+                        _rels = _ET.fromstring(_z.read('xl/_rels/workbook.xml.rels'))
+                        for _r in _rels:
+                            if _r.get('Id') == _rid:
+                                target_sheet_xml_path = 'xl/' + _r.get('Target')
+                                break
+            except Exception:
+                target_sheet_xml_path = None
+            # Falls through to shared cell-by-cell copy code below
+
+        # ── xls path: copy cell by cell into new workbook ─────────────
+        # Crear nuevo workbook
+        wb_nuevo = openpyxl.Workbook()
+        ws_destino = wb_nuevo.active
+        ws_destino.title = ws_origen_name if ws_origen_name else "Planilla de Carga"
+
+        # Copiar celdas: valores y estilos
+        for row in ws_origen.iter_rows():
+            for cell in row:
+                nueva_celda = ws_destino.cell(row=cell.row, column=cell.column)
+                nueva_celda.value = cell.value
+                if cell.has_style:
+                    nueva_celda.font = copy(cell.font)
+                    nueva_celda.border = copy(cell.border)
+                    nueva_celda.fill = copy(cell.fill)
+                    nueva_celda.number_format = cell.number_format
+                    nueva_celda.protection = copy(cell.protection)
+                    nueva_celda.alignment = copy(cell.alignment)
+
+        # Copiar celdas combinadas
+        for merge in ws_origen.merged_cells.ranges:
+            ws_destino.merge_cells(str(merge))
+
+        # Copiar anchos de columna
+        # openpyxl no crea ColumnDimension para columnas agrupadas en un <col min="2" max="3">
+        # (solo asigna el ancho a la primera letra del rango). Leemos el XML original
+        # para obtener los anchos reales por rango y aplicarlos a cada columna individual.
+        col_widths = {}  # col_letter -> width
+        # Para .xls usamos el .xlsx temporal convertido; para .xlsx usamos el source directo
+        _xml_source = temp_xlsx if is_xls else source_path
+        if _xml_source and _xml_source.lower().endswith(".xlsx") and target_sheet_xml_path:
+            try:
+                import zipfile as _zf
+                import xml.etree.ElementTree as _ET
+                _NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+                with _zf.ZipFile(_xml_source, 'r') as _z:
+                    _sheet_xml = _ET.fromstring(_z.read(target_sheet_xml_path))
+                for _col in _sheet_xml.findall(f'{{{_NS}}}cols/{{{_NS}}}col'):
+                    _min = int(_col.get('min', '1'))
+                    _max = int(_col.get('max', '1'))
+                    _w = _col.get('width')
+                    if _w:
+                        for _ci in range(_min, _max + 1):
+                            col_widths[openpyxl.utils.get_column_letter(_ci)] = float(_w)
+            except Exception:
+                pass  # fallback below
+        # Fallback / complement: use openpyxl's column_dimensions for anything not covered
+        for col_idx in range(1, 27):  # A-Z
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            if col_letter in col_widths:
+                ws_destino.column_dimensions[col_letter].width = col_widths[col_letter]
+            else:
+                src_dim = ws_origen.column_dimensions.get(col_letter)
+                if src_dim and src_dim.width:
+                    ws_destino.column_dimensions[col_letter].width = src_dim.width
+
+        # Auto-fit: expand columns whose content es más ancho que el ancho seteado
+        for col_idx in range(1, 27):
+            col_letter = openpyxl.utils.get_column_letter(col_idx)
+            max_len = 0
+            for row in ws_destino.iter_rows(min_col=col_idx, max_col=col_idx):
+                for cell in row:
+                    if cell.value is not None:
+                        cell_len = len(str(cell.value))
+                        if cell_len > max_len:
+                            max_len = cell_len
+            if max_len > 0:
+                fit_width = max_len * 1.3 + 3
+                current = ws_destino.column_dimensions[col_letter].width
+                if current is None or fit_width > current:
+                    ws_destino.column_dimensions[col_letter].width = fit_width
+
+        # Copiar alturas de fila
+        _max = ws_origen.max_row or 50
+        for row_idx in range(1, _max + 1):
+            src_dim = ws_origen.row_dimensions.get(row_idx)
+            if src_dim and src_dim.height:
+                ws_destino.row_dimensions[row_idx].height = src_dim.height
+
+        # Copiar protección de hoja
+        if ws_origen.protection.sheet:
+            ws_destino.protection.sheet = True
+            ws_destino.protection.enable()
+            # openpyxl no preserva el hash del password al cargar; setear "123" explícitamente
+            ws_destino.protection.password = self._cfg_obtener("valores", "clave_pdf", "123")
+
+        # Generar nombre de archivo de salida
+        partes = os.path.basename(folder_path).split("_")
+        sufijo = "_".join(partes[5:]) if len(partes) > 5 else ""
+        nombre_salida = f"PLANILLA DE CARGA_{sufijo}.xlsx" if sufijo else "PLANILLA DE CARGA.xlsx"
+        ruta_salida = os.path.join(folder_path, nombre_salida)
+
+        try:
+            wb_nuevo.save(ruta_salida)
+        except PermissionError:
+            if preguntar_reintentar(nombre_salida, parent=self):
+                try:
+                    wb_nuevo.save(ruta_salida)
+                except Exception as e:
+                    wb.close()
+                    wb_nuevo.close()
+                    self._limpiar_temp_xlsx()
+                    return False, f"No se pudo guardar: {e}"
+            else:
+                wb.close()
+                wb_nuevo.close()
+                self._limpiar_temp_xlsx()
+                return False, "Operación cancelada (archivo en uso)"
+        except Exception as e:
+            wb.close()
+            wb_nuevo.close()
+            self._limpiar_temp_xlsx()
+            return False, f"Error al guardar: {e}"
+
+        wb.close()
+        wb_nuevo.close()
+        self._limpiar_temp_xlsx()
+        return True, nombre_salida
+
+    def _limpiar_temp_xlsx(self):
+        """Elimina el archivo .xlsx temporal generado al convertir .xls."""
+        temp = getattr(self, "_temp_xlsx_to_clean", None)
+        if temp:
+            try:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+            except OSError:
+                pass
+            self._temp_xlsx_to_clean = None
+
+    def _generar_planilla_carga_thread(self, popup, carpetas_seleccionadas):
+        """Procesa la extracción de planillas de carga en hilo de fondo."""
+        if not carpetas_seleccionadas:
+            messagebox.showwarning("Incompleto", "Seleccioná al menos una carpeta.")
+            return
+
+        popup.destroy()
+
+        if self.tarea_activa:
+            return
+        self.tarea_activa = True
+        self._cancelar_tarea.clear()
+        self.btn_planilla_carga.configure(text="⏳  Procesando...", state="disabled")
+        self.btn_ejecutar_planillas.configure(state="disabled")
+        self._limpiar_log()
+        self._log("📋 Generando Planillas de Carga")
+
+        def worker():
+            self._set_log_panel("planillas")
+            total = len(carpetas_seleccionadas)
+            errores = []
+            for i, ruta_carp in enumerate(carpetas_seleccionadas, 1):
+                if self._cancelar_tarea.is_set():
+                    self.log_queue.put("[...] ⚠ Tarea cancelada.")
+                    break
+                nombre_carp = os.path.basename(ruta_carp)
+                self.log_queue.put(f"[...] ({i}/{total}) 📁 {nombre_carp}")
+
+                ok, msg = self._extraer_planilla_carga(ruta_carp)
+                if ok:
+                    self.log_queue.put(f"[...]     ✓ {msg}")
+                else:
+                    self.log_queue.put(f"[...]     ⚠ {msg}")
+                    errores.append(f"{nombre_carp}: {msg}")
+
+            resumen = f"[...] ✓ Planillas de Carga completadas: {total - len(errores)}/{total}"
+            if errores:
+                resumen += f"\n[...] ⚠ Errores ({len(errores)}):"
+                for err in errores:
+                    resumen += f"\n[...]     • {err}"
+            self.log_queue.put(resumen)
+
+            def _mostrar_resumen():
+                if errores:
+                    messagebox.showwarning(
+                        "Planilla de Carga",
+                        f"Procesadas: {total - len(errores)}/{total}\n\n"
+                        f"Errores:\n" + "\n".join(f"• {e}" for e in errores),
+                    )
+                else:
+                    messagebox.showinfo(
+                        "Planilla de Carga",
+                        f"✅ {total} carpeta(s) procesada(s) correctamente.",
+                    )
+
+            self.after(0, _mostrar_resumen)
+            self.after(0, self._planilla_carga_done)
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+    def _planilla_carga_done(self):
+        self.tarea_activa = False
+        try:
+            self.btn_planilla_carga.configure(
+                text="📋 Planilla de Carga", state="normal",
+            )
+            self.btn_ejecutar_planillas.configure(state="normal")
+        except (AttributeError, Exception):
+            pass
 
     def _aplicar_guarda(self, popup, guarda_elegido, carpetas_seleccionadas):
         """Escribe el guarda elegido en la hoja Choferes de cada planilla de carga."""
@@ -10105,6 +10641,14 @@ class App(ctk.CTk):
             width=120,
         )
 
+        self._ajustes_seccion(parent, "Planilla de Carga")
+        self._ent_clave_pdf = self._ajustes_row(
+            parent, "Clave de protección:",
+            self._cfg_obtener("valores", "clave_pdf", "123"),
+            extra="Contraseña que se aplica a la hoja 'Planilla de Carga' al extraerla.",
+            width=120,
+        )
+
         self._ajustes_seccion(parent, "Guardas Disponibles")
         ctk.CTkLabel(
             parent,
@@ -10586,6 +11130,9 @@ class App(ctk.CTk):
                     valores_cfg["ata_tares"] = int(w.get().strip())
                 except ValueError:
                     valores_cfg["ata_tares"] = 65000
+            w = _g('_ent_clave_pdf')
+            if w is not None:
+                valores_cfg["clave_pdf"] = w.get().strip() or "123"
             w = _g('_ajustes_texto_guardas')
             if w is not None:
                 guardas = [l.strip() for l in w.get("1.0", "end-1c").split("\n") if l.strip()]
