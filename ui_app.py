@@ -216,6 +216,9 @@ class App(ctk.CTk):
         # Bind de teclas
         self.bind("<Escape>", lambda e: self._confirmar_salida())
         self.protocol("WM_DELETE_WINDOW", self._confirmar_salida)
+        # Destroy popups on minimize to prevent grab deadlock
+        self._open_popups = set()
+        self.bind("<Unmap>", self._on_main_unmap)
 
         # Verificar contraseña maestra al iniciar, luego diagnóstico
         self.after(300, self._verificar_inicio)
@@ -254,6 +257,35 @@ class App(ctk.CTk):
                 self.geometry(f"+{x}+{y}")
         except Exception:
             pass
+
+    def _register_popup(self, popup):
+        """Track a Toplevel popup so it's destroyed on minimize."""
+        self._open_popups.add(popup)
+        popup.bind("<Destroy>", lambda e, p=popup: self._open_popups.discard(p))
+
+    def _on_main_unmap(self, event):
+        """When main window is minimized, destroy all open popups to release grabs."""
+        for popup in list(self._open_popups):
+            try:
+                popup.grab_release()
+            except Exception:
+                pass
+            try:
+                popup.destroy()
+            except Exception:
+                pass
+        self._open_popups.clear()
+        # Also destroy any untracked Toplevel children (safety net)
+        for w in self.winfo_children():
+            if isinstance(w, ctk.CTkToplevel):
+                try:
+                    w.grab_release()
+                except Exception:
+                    pass
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
 
     def _verificar_inicio(self):
         if not self._pw_inicio_valida:
@@ -958,6 +990,68 @@ class App(ctk.CTk):
         self._imp_lbl_estado.configure(text="🔍 Buscando carpetas...")
         self.after(100, self._imp_escanear_carpetas)
 
+    def _scan_desktop_folders(self, pattern=None, callback=None, button=None):
+        """Scan Desktop for folders containing CONTENEDORES Excel files.
+        
+        Thread-safe: launches a background daemon thread, results delivered
+        via self.after(0, callback, results) on the main thread.
+        
+        Args:
+            pattern: regex to filter folder names (None = all folders)
+            callback: function(results) called on main thread with list of dicts
+            button: tkinter button to disable during scan (optional)
+        
+        Returns list of dicts: [{"name", "path", "excel_path", "pdf_count"}]
+        """
+        if button:
+            button.configure(state="disabled")
+
+        def _worker():
+            try:
+                desktop = self._resolver_ruta("planillas_carga", "Desktop")
+                results = []
+                if os.path.isdir(desktop):
+                    for entry in os.scandir(desktop):
+                        if not entry.is_dir() or entry.name.startswith('.'):
+                            continue
+                        if entry.name.upper() in ("RECYCLED", "RECYCLER"):
+                            continue
+                        if pattern and not re.search(pattern, entry.name, re.IGNORECASE):
+                            continue
+                        excel_path = None
+                        pdf_count = 0
+                        try:
+                            for f in os.scandir(entry.path):
+                                if f.is_file():
+                                    fname_upper = f.name.upper()
+                                    if ("CONTENEDORES" in fname_upper
+                                            and fname_upper.endswith(('.XLS', '.XLSX'))):
+                                        if excel_path is None:
+                                            excel_path = f.path
+                                    if f.name.lower().endswith('.pdf'):
+                                        pdf_count += 1
+                        except OSError:
+                            continue
+                        if excel_path:
+                            results.append({
+                                "name": entry.name,
+                                "path": entry.path,
+                                "excel_path": excel_path,
+                                "pdf_count": pdf_count,
+                            })
+                if callback:
+                    self.after(0, callback, results)
+            except Exception as e:
+                self._log(f"ERROR al escanear Desktop: {e}")
+                if callback:
+                    self.after(0, callback, [])
+            finally:
+                if button:
+                    self.after(0, lambda: button.configure(state="normal"))
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
     def _imp_escanear_carpetas(self):
         """Escanea el Escritorio y lista las carpetas de carga en la columna izquierda."""
         for w in self._imp_scroll_carpetas.winfo_children():
@@ -968,21 +1062,18 @@ class App(ctk.CTk):
         self._imp_lbl_estado.configure(text="🔍 Buscando carpetas...")
         self.update_idletasks()
 
-        escritorio = self._resolver_ruta("planillas_carga", "Desktop")
+        self._scan_desktop_folders(
+            callback=self._imp_poblar_carpetas,
+            button=self._imp_btn_refresh,
+        )
+
+    def _imp_poblar_carpetas(self, results):
+        """Callback: puebla el scroll frame con las carpetas encontradas."""
         carpetas = []
-        if os.path.exists(escritorio):
-            for item in sorted(os.listdir(escritorio)):
-                ruta = os.path.join(escritorio, item)
-                if os.path.isdir(ruta) and not item.startswith(".") and item.upper() not in ("RECYCLED", "RECYCLER"):
-                    try:
-                        archivos = os.listdir(ruta)
-                    except Exception:
-                        continue
-                    excels = [a for a in archivos if "CONTENEDORES" in a.upper() and (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS"))]
-                    if excels:
-                        match_frac = re.search(r"(F(?:RACCION)?\s*\d+)", item, re.IGNORECASE)
-                        frac = match_frac.group(1).upper() if match_frac else ""
-                        carpetas.append((ruta, item, frac))
+        for folder in results:
+            match_frac = re.search(r"(F(?:RACCION)?\s*\d+)", folder["name"], re.IGNORECASE)
+            frac = match_frac.group(1).upper() if match_frac else ""
+            carpetas.append((folder["path"], folder["name"], frac))
 
         if not carpetas:
             ctk.CTkLabel(
@@ -2354,7 +2445,11 @@ class App(ctk.CTk):
         for row in self._mail_tree.get_children():
             self._mail_tree.delete(row)
         self._mail_data.clear()
-        t = threading.Thread(target=self._mail_worker, daemon=True)
+        try:
+            cantidad = int(self._mail_entry_cantidad.get().strip())
+        except (ValueError, AttributeError):
+            cantidad = 2
+        t = threading.Thread(target=self._mail_worker, args=(cantidad,), daemon=True)
         t.start()
 
     def _mail_ejecutar_buscar(self):
@@ -2507,15 +2602,11 @@ class App(ctk.CTk):
             fecha_dt = datetime.min
         resultados.append((fecha_dt, fecha_str, mid, asunto))
 
-    def _mail_worker(self):
+    def _mail_worker(self, cantidad):
         """Modo 0: Descarga automática de los N mails más nuevos que cumplen las reglas."""
         self._set_log_panel("descargar")
         resultados = []
         try:
-            try:
-                cantidad = int(self._mail_entry_cantidad.get().strip())
-            except ValueError:
-                cantidad = 2
             self._log(f"Conectando a {self._cfg_obtener_correo('imap_server', IMAP_SERVER)}...")
             try:
                 mail = self._imap_conectar()
@@ -3786,31 +3877,12 @@ class App(ctk.CTk):
             messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución. Espere a que finalice.")
             return
 
-        guardas = self._cfg_obtener("valores", "guardas", ["Gonzalez", "Rodriguez", "Martinez", "Perez"])
-        escritorio = self._resolver_ruta("planillas_carga", "Desktop")
+        self._scan_desktop_folders(callback=self._popup_agregar_guarda_done)
 
-        # Buscar carpetas disponibles (igual que el análisis de planillas)
-        carpetas_encontradas = []
-        try:
-            for item in sorted(os.listdir(escritorio)):
-                ruta = os.path.join(escritorio, item)
-                if not os.path.isdir(ruta):
-                    continue
-                if item.startswith("."):
-                    continue
-                # Buscar planillas de carga dentro
-                try:
-                    archivos = os.listdir(ruta)
-                except Exception:
-                    continue
-                for a in archivos:
-                    up = a.upper()
-                    if "CONTENEDORES" in up and (up.endswith(".XLSX") or up.endswith(".XLS")):
-                        carpetas_encontradas.append((item, ruta))
-                        break
-        except Exception as e:
-            messagebox.showerror("Error", f"No se pudo leer el escritorio:\n{e}")
-            return
+    def _popup_agregar_guarda_done(self, results):
+        """Callback: muestra popup de agregar guarda con las carpetas encontradas."""
+        guardas = self._cfg_obtener("valores", "guardas", ["Gonzalez", "Rodriguez", "Martinez", "Perez"])
+        carpetas_encontradas = [(r["name"], r["path"]) for r in results]
 
         if not carpetas_encontradas:
             messagebox.showinfo("Sin planillas", "No se encontraron archivos Contenedores en el escritorio.")
@@ -6703,11 +6775,11 @@ class App(ctk.CTk):
         - ("_OCR_RESULT_", data) → resultado de OCR — pobla TreeView (T7)
         - ("_OCR_DONE_", None) → señal de fin de OCR (T7+)
         
-        Procesa max 100 msg/tick para no congelar el main thread.
+        Procesa max 20 msg/tick para no congelar el main thread.
         """
         try:
             _processed = 0
-            while _processed < 100:
+            while _processed < 20:
                 msg = self.log_queue.get_nowait()
                 if isinstance(msg, tuple):
                     if len(msg) == 3 and msg[0] == "_LOG_":
@@ -8289,55 +8361,14 @@ class App(ctk.CTk):
 
     def _control_final_auto_scan(self):
         """Auto-scan Desktop for folders with CONTENEDORES Excel."""
-        import tkinter as tk
-
         if self.tarea_activa:
             messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
             return
 
-        desktop = self._resolver_ruta("planillas_carga", "Desktop")
-        if not os.path.isdir(desktop):
-            self._log("ERROR: No se encontró el Desktop")
-            return
+        self._scan_desktop_folders(callback=self._control_final_auto_scan_done)
 
-        # Walk Desktop 1 level deep
-        folders = []
-        try:
-            for entry in os.scandir(desktop):
-                if not entry.is_dir() or entry.name.startswith('.'):
-                    continue
-                # Check for CONTENEDORES Excel (case-insensitive)
-                excel_path = None
-                excel_count = 0
-                for f in os.scandir(entry.path):
-                    if f.is_file():
-                        fname_lower = f.name.lower()
-                        if ("contenedores" in fname_lower
-                                and f.name.lower().endswith(('.xls', '.xlsx'))):
-                            excel_count += 1
-                            if excel_path is None:
-                                excel_path = f.path
-                if excel_count == 0:
-                    continue
-                if excel_count > 1:
-                    self._log(f"⚠ {entry.name}: {excel_count} Excels CONTENEDORES, usando el primero")
-
-                # Count candidate PDFs by filename (informational)
-                pdf_count = 0
-                for f in os.scandir(entry.path):
-                    if f.is_file() and f.name.lower().endswith('.pdf'):
-                        pdf_count += 1
-
-                folders.append({
-                    "name": entry.name,
-                    "path": entry.path,
-                    "excel_path": excel_path,
-                    "pdf_count": pdf_count,
-                })
-        except OSError as e:
-            self._log(f"ERROR al escanear Desktop: {e}")
-            return
-
+    def _control_final_auto_scan_done(self, folders):
+        """Callback after background scan completes for control final auto."""
         if not folders:
             messagebox.showinfo(
                 "Sin resultados",

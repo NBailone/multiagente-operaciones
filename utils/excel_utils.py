@@ -31,7 +31,7 @@ def preguntar_reintentar(nombre_archivo, parent=None):
         _mostrar()
     elif parent is not None and hasattr(parent, 'after'):
         parent.after(0, _mostrar)
-        resultado.wait()
+        resultado.wait(timeout=300)
     else:
         _mostrar()
 
