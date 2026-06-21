@@ -9322,9 +9322,13 @@ class App(ctk.CTk):
             override_menu.set(str(level))
             override_menu.pack(side="right", padx=(0, 8))
 
-            # Cuerpo: frame normal sin scroll
+            # Cuerpo: grid para columnas alineadas
             body = ctk.CTkFrame(dlg, fg_color="transparent")
-            body.pack(fill="x", padx=12, pady=8)
+            body.pack(fill="both", expand=True, padx=12, pady=8)
+            body.grid_columnconfigure(0, minsize=100, weight=0)  # Campo — fijo
+            body.grid_columnconfigure(1, weight=1)  # Ticket — expand
+            body.grid_columnconfigure(2, weight=1)  # Aduana — expand
+            body.grid_columnconfigure(3, weight=1)  # Contenedor — expand
 
             if modo == "terrestre":
                 campos = [
@@ -9355,7 +9359,7 @@ class App(ctk.CTk):
             campos_mayoria = {"Camion", "Semi", "DNI",
                               "Neto (kg)", "Contenedor", "Permiso"}
 
-            for campo, key_ticket, key_aduana in campos:
+            for row_i, (campo, key_ticket, key_aduana) in enumerate(campos):
                 val_ticket = datos["ticket"].get(key_ticket, "")
                 val_cont = datos["contenedor"].get(key_ticket, "")
                 val_aduana = datos["aduana"].get(key_aduana, "—") if key_aduana else "—"
@@ -9376,22 +9380,21 @@ class App(ctk.CTk):
                     fg = "#006400" if ok else "#8B0000"
                     colors = [(bg, fg)] * 3
 
-                row = ctk.CTkFrame(body, fg_color="transparent")
-                row.pack(fill="x", pady=1)
-
+                # Campo label (column 0)
                 ctk.CTkLabel(
-                    row, text=campo, width=100, anchor="w",
+                    body, text=campo, anchor="w",
                     font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"], weight="bold"),
                     text_color=Palette.TEXT_PRIMARY,
-                ).pack(side="left", padx=(4, 0))
+                ).grid(row=row_i, column=0, padx=(4, 8), pady=2, sticky="w")
 
-                for val, (bg, fg) in zip(vals_list, colors):
+                # Data columns (1, 2, 3)
+                for col_i, (val, (bg, fg)) in enumerate(zip(vals_list, colors)):
                     lbl = ctk.CTkLabel(
-                        row, text=val, width=160, anchor="center",
+                        body, text=val, anchor="center",
                         font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
                         fg_color=bg, text_color=fg, corner_radius=4,
                     )
-                    lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+                    lbl.grid(row=row_i, column=col_i + 1, padx=4, pady=2, sticky="ew")
 
             # Legend
             leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
