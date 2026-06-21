@@ -5,7 +5,7 @@
 Project: Multiagente — Maritime shipping operations automation
 Stack: Python 3.9+, CustomTkinter, PyInstaller, Tesseract/PaddleOCR
 
-Last updated: 2026-06-17
+Last updated: 2026-06-21
 
 ## Sources scanned
 

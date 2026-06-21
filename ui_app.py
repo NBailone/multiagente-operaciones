@@ -204,6 +204,7 @@ class App(ctk.CTk):
         self._cargar_datos_rutas = {}
         self._cargar_datos_comparacion = {}  # iid → dict para popup comparación
         self._cargar_datos_idx = 0
+        self._cf_auto_var = ctk.BooleanVar(value=False)  # Control Final auto mode
 
         # ── Construir UI ──────────────────────────────────────────────
         self._crear_sidebar()
@@ -7530,6 +7531,22 @@ class App(ctk.CTk):
         )
         self.btn_control_final.pack(side="left", padx=2, pady=5)
 
+        self._cf_auto_switch = ctk.CTkSwitch(
+            toolbar, text="Auto",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            variable=self._cf_auto_var,
+            progress_color=Palette.ACCENT,
+            button_color=Palette.TEXT_SECONDARY,
+            button_hover_color=Palette.TEXT_PRIMARY,
+            command=self._control_final_switch_toggle,
+        )
+        self._cf_auto_switch.pack(side="left", padx=(0, 6), pady=5)
+
+        # Restore auto mode state from config
+        if self.config.get("control_final_auto", False):
+            self._cf_auto_var.set(True)
+            self.btn_control_final.configure(text="Control Final ⚡")
+
         self.progress_carga = ctk.CTkProgressBar(
             toolbar, width=140, height=8, corner_radius=4,
             mode="indeterminate",
@@ -8205,8 +8222,21 @@ class App(ctk.CTk):
         _build_popup(self.config.get("font_level", 1))
 
 
+    def _control_final_switch_toggle(self):
+        """Toggle auto mode. Changes btn text hint and persists state."""
+        if self._cf_auto_var.get():
+            self.btn_control_final.configure(text="Control Final ⚡")
+        else:
+            self.btn_control_final.configure(text="Control Final")
+        # Persist state
+        self.config["control_final_auto"] = self._cf_auto_var.get()
+        self._guardar_config()
+
     def _control_final_seleccionar(self):
         """Seleccionar PDFs (tickets + aduanas) + Excel para Control Final."""
+        if self._cf_auto_var.get():
+            self._control_final_auto_scan()
+            return
         from tkinter import filedialog as tk_filedialog
         rutas = tk_filedialog.askopenfilenames(
             title="Seleccionar PDFs (tickets + salidas aduana) + Excel",
@@ -8256,6 +8286,226 @@ class App(ctk.CTk):
             daemon=True,
         )
         t.start()
+
+    def _control_final_auto_scan(self):
+        """Auto-scan Desktop for folders with CONTENEDORES Excel."""
+        import tkinter as tk
+
+        if self.tarea_activa:
+            messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
+            return
+
+        desktop = self._resolver_ruta("planillas_carga", "Desktop")
+        if not os.path.isdir(desktop):
+            self._log("ERROR: No se encontró el Desktop")
+            return
+
+        # Walk Desktop 1 level deep
+        folders = []
+        try:
+            for entry in os.scandir(desktop):
+                if not entry.is_dir() or entry.name.startswith('.'):
+                    continue
+                # Check for CONTENEDORES Excel (case-insensitive)
+                excel_path = None
+                excel_count = 0
+                for f in os.scandir(entry.path):
+                    if f.is_file():
+                        fname_lower = f.name.lower()
+                        if ("contenedores" in fname_lower
+                                and f.name.lower().endswith(('.xls', '.xlsx'))):
+                            excel_count += 1
+                            if excel_path is None:
+                                excel_path = f.path
+                if excel_count == 0:
+                    continue
+                if excel_count > 1:
+                    self._log(f"⚠ {entry.name}: {excel_count} Excels CONTENEDORES, usando el primero")
+
+                # Count candidate PDFs by filename (informational)
+                pdf_count = 0
+                for f in os.scandir(entry.path):
+                    if f.is_file() and f.name.lower().endswith('.pdf'):
+                        pdf_count += 1
+
+                folders.append({
+                    "name": entry.name,
+                    "path": entry.path,
+                    "excel_path": excel_path,
+                    "pdf_count": pdf_count,
+                })
+        except OSError as e:
+            self._log(f"ERROR al escanear Desktop: {e}")
+            return
+
+        if not folders:
+            messagebox.showinfo(
+                "Sin resultados",
+                "No se encontraron carpetas con CONTENEDORES en el Desktop"
+            )
+            return
+
+        self._log(f"[Auto] {len(folders)} carpetas con CONTENEDORES encontradas")
+        self._control_final_auto_popup(folders)
+
+    def _control_final_auto_popup(self, folders):
+        """Popup to select folders for auto-scan Control Final (planilla de carga style)."""
+        top = ctk.CTkToplevel(self)
+        top.title("Control Final Automático")
+        top.geometry("600x400")
+        top.configure(fg_color=Palette.BG_CARD)
+        top.transient(self)
+        top.lift()
+        top.grab_set()
+        top.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width() - 600) // 2
+        py = self.winfo_y() + (self.winfo_height() - 400) // 2
+        top.geometry(f"600x400+{px}+{py}")
+
+        ctk.CTkLabel(
+            top, text="CONTROL FINAL AUTOMÁTICO",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+            text_color=Palette.TEXT_PRIMARY,
+        ).pack(pady=(16, 8))
+
+        ctk.CTkLabel(
+            top, text="Seleccioná las carpetas del Desktop a procesar:",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13),
+            text_color=Palette.TEXT_SECONDARY,
+        ).pack(anchor="w", padx=16, pady=(0, 6))
+
+        scroll = ctk.CTkScrollableFrame(
+            top, fg_color=Palette.BG_TABLE, corner_radius=8,
+            border_width=1, border_color=Palette.BORDER,
+        )
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        checks = {}
+        for carp in folders:
+            var = ctk.BooleanVar(value=True)
+            checks[carp["name"]] = var
+
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=16, pady=(0, 12))
+
+        def _update_btn(*_args):
+            any_selected = any(v.get() for v in checks.values())
+            btn_procesar.configure(state="normal" if any_selected else "disabled")
+
+        def _todas():
+            for v in checks.values():
+                v.set(True)
+
+        def _ninguna():
+            for v in checks.values():
+                v.set(False)
+
+        def _confirmar():
+            selected = [c for c in folders if checks[c["name"]].get()]
+            top.destroy()
+
+            if not selected:
+                return
+
+            # Collect all PDFs + Excel from selected folders
+            # Filter out permisos de exportación (YY069EC*.pdf) — not tickets
+            import re as _re
+            _permiso_pat = _re.compile(r'^\d{2}069EC', _re.IGNORECASE)
+            all_pdfs = []
+            all_excels = []
+            for carp in selected:
+                for f in os.scandir(carp["path"]):
+                    if f.is_file() and f.name.lower().endswith('.pdf'):
+                        if _permiso_pat.match(f.name):
+                            continue  # skip permisos de exportación
+                        all_pdfs.append(f.path)
+                if carp["excel_path"]:
+                    all_excels.append(carp["excel_path"])
+
+            if not all_pdfs:
+                messagebox.showwarning(
+                    "Sin PDFs",
+                    "Las carpetas seleccionadas no contienen PDFs"
+                )
+                return
+            if not all_excels:
+                messagebox.showwarning(
+                    "Sin Excel",
+                    "Las carpetas seleccionadas no contienen Excel CONTENEDORES"
+                )
+                return
+
+            self._log(f"[Auto] {len(all_pdfs)} PDFs, {len(all_excels)} Excel(s)")
+
+            if self.tarea_activa:
+                messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
+                return
+            self.tarea_activa = True
+
+            for btn_name in ('btn_control_final', 'btn_controlar_tickets',
+                             'btn_controlar_coordinacion'):
+                btn = getattr(self, btn_name, None)
+                if btn and btn.winfo_exists():
+                    btn.configure(state="disabled")
+
+            if (hasattr(self, 'progress_carga')
+                    and self.progress_carga.winfo_exists()):
+                self.progress_carga.pack(side="right", padx=12)
+                self.progress_carga.configure(mode="indeterminate")
+                self.progress_carga.start()
+
+            # Show control final section
+            self._section_tickets.pack_forget()
+            self._section_coord.pack_forget()
+            self._section_final.pack(fill="both", expand=True, pady=(0, 6))
+
+            for item in self.tree_control_final.get_children():
+                self.tree_control_final.delete(item)
+
+            t = threading.Thread(
+                target=self._control_final_worker,
+                args=(list(all_pdfs), list(all_excels)),
+                daemon=True,
+            )
+            t.start()
+
+        # Todas / Ninguna (izquierda)
+        ctk.CTkButton(
+            btn_frame, text="Todas", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_todas,
+        ).pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(
+            btn_frame, text="Ninguna", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_ninguna,
+        ).pack(side="left", padx=4)
+
+        # Procesar (derecha)
+        btn_procesar = ctk.CTkButton(
+            btn_frame, text="Procesar", width=140, height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.WHITE, corner_radius=6,
+            command=_confirmar,
+        )
+        btn_procesar.pack(side="right", padx=4)
+
+        # Checkboxes
+        for carp in folders:
+            var = checks[carp["name"]]
+            var.trace_add("write", _update_btn)
+            ctk.CTkCheckBox(
+                scroll, text=carp["name"], variable=var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                text_color=Palette.TEXT_PRIMARY,
+            ).pack(anchor="w", padx=12, pady=4)
 
     def _control_final_worker(self, pdf_paths, excel_paths):
         """Worker thread para Control Final."""

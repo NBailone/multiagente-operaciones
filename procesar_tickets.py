@@ -1688,10 +1688,11 @@ def extraer_mic_dta(pdf_path: str) -> dict:
 
     # Campo 40 — Conductor + DNI/RUT (Argentina DNI o Chile CI/RUT)
     txt = _f(40)
-    m = re.search(r"CONDUCTOR 1:\s*(.+?)\s+DOC:\s*(?:DNI|CI)\s*([\d-]+)", txt)
+    m = re.search(r"CONDUCTOR 1:\s*(.+?)\s+DOC:\s*(?:DNI|CI)\s*([\d.\-]+)", txt)
     if m:
         data["conductor"] = m.group(1).strip()
-        data["cuil"] = m.group(2).strip()
+        # Remove dots (thousand separators) from DNI: 16.345.654 → 16345654
+        data["cuil"] = m.group(2).replace(".", "").strip()
     else:
         data["conductor"] = ""
         data["cuil"] = ""
@@ -1766,7 +1767,8 @@ Instrucciones por campo:
   - PARAGUAYA: 4 letras + 3 números o 3 letras + 3 números
   - URUGUAYA: 3 letras + 4 números
   - Si ves una combinación de letras y números de 5 a 7 caracteres, probablemente es la patente.
-  - IMPORTANTE: no confundas la letra O (oh) con el número 0 (cero). Si una patente tiene números donde deberían ir letras (ej: "AF1910A" → es "AF191OA"), usá la interpretación correcta según el formato.
+  - REGLA PARA PATENTES MERCOSUR: Las posiciones 0,1,5,6 son LETRAS y las posiciones 2,3,4 son NÚMEROS. Ejemplo: AF191OA → A(pos0=letra) F(pos1=letra) 1(pos2=número) 9(pos3=número) 1(pos4=número) O(pos5=letra) A(pos6=letra). NUNCA pongas un número donde va letra ni viceversa.
+  - CRÍTICO: La letra O (oh) y el número 0 (cero) son diferentes. En patentes Mercosur ARG, las posiciones 0,1,5,6 SIEMPRE son letras (A-Z), nunca números. Si ves "AF1910A", la posición 5 es O (letra), no 0 (cero). Corregilo a "AF191OA".
 - "Semirremolque": buscar "Acoplado", "Semirremolque" o "Semi"
 - "Conductor": buscar "Conductor" o "Chofer"
 - "DNI": puede ser DNI argentino (solo números), CI chileno (ej: 24581338-4 con guión), o RUT. Tomar el número completo incluyendo el guión si aparece.
