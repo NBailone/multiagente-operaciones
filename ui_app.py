@@ -205,6 +205,7 @@ class App(ctk.CTk):
         self._cargar_datos_comparacion = {}  # iid → dict para popup comparación
         self._cargar_datos_idx = 0
         self._cf_auto_var = ctk.BooleanVar(value=False)  # Control Final auto mode
+        self._ct_auto_var = ctk.BooleanVar(value=False)  # Control Tickets auto mode
 
         # ── Construir UI ──────────────────────────────────────────────
         self._crear_sidebar()
@@ -6810,12 +6811,33 @@ class App(ctk.CTk):
             pass
         self.after(100, self._poll_log_queue)
 
+    @staticmethod
+    def _fmt_kg(v):
+        """Format kg value: no .0, with thousands separator. E.g. 15690 → '15.690'"""
+        try:
+            n = float(str(v).replace(',', '.'))
+            return f"{int(n):,}".replace(",", ".")
+        except (ValueError, TypeError):
+            return str(v) if v else "0"
+
+    @staticmethod
+    def _fmt_dni(v):
+        """Format DNI with thousands separator. E.g. 27981220 → '27.981.220'"""
+        try:
+            digits = ''.join(c for c in str(v) if c.isdigit())
+            n = int(digits)
+            return f"{n:,}".replace(",", ".")
+        except (ValueError, TypeError):
+            return str(v) if v else ""
+
     def _procesar_resultado_ocr(self, data):
         """Inserta una fila por ticket con color verde/rojo según match.
         Almacena datos de comparación para abrir detalle al hacer click."""
         ticket = data.get("ticket", {})
         cont_data = data.get("contenedor")
         ruta_match = data.get("match")
+        shared_excels = data.get("shared_excels", [])
+        shared_neto_sum = data.get("shared_neto_sum", 0)
 
         # Valores OCR
         archivo   = ticket.get("archivo", "")
@@ -6919,7 +6941,9 @@ class App(ctk.CTk):
             iid = f"ocr_{self._cargar_datos_idx}"
             self._cargar_datos_idx += 1
             estado = "⚠ No encontrado"
-            valores = (archivo, patente, semi, conductor, dni, neto_ocr, tara_ocr, contenedor_str, permiso, estado)
+            valores = (archivo, patente, semi, conductor,
+                       self._fmt_dni(dni), self._fmt_kg(neto_ocr), self._fmt_kg(tara_ocr),
+                       contenedor_str, permiso, estado)
             try:
                 self.tree_carga.insert("", "end", values=valores, iid=iid,
                                        tags=("tag_no_match",))
@@ -6959,7 +6983,11 @@ class App(ctk.CTk):
         ok_semi      = _raw_txt(semi) == _raw_txt(cam_semi)
         ok_conductor = _nombres_equivalentes(conductor, cam_cond)
         ok_dni       = _raw_txt(dni) == _raw_txt(cam_dni)
-        ok_neto      = _comparar_num(neto_ocr, peso_carga)
+        # Shared trips: compare against SUM of Neto from all Excels
+        if shared_excels:
+            ok_neto = _comparar_num(neto_ocr, shared_neto_sum)
+        else:
+            ok_neto = _comparar_num(neto_ocr, peso_carga)
         ok_tara      = _comparar_num(tara_ocr, tara_cont)
         ok_contenedor      = _raw_txt(contenedor_str) == _raw_txt(camion_match.get("contenedor", ""))
         ok_permiso   = _raw_txt(permiso) == _raw_txt(pe_val) if pe_val else True
@@ -6980,8 +7008,8 @@ class App(ctk.CTk):
         nombre_contenedor = os.path.basename(ruta_match)
         valores = (
             f"📄 {archivo}",
-            patente, semi, conductor, dni,
-            f"{neto_ocr:.0f}", f"{tara_ocr:.0f}",
+            patente, semi, conductor, self._fmt_dni(dni),
+            self._fmt_kg(neto_ocr), self._fmt_kg(tara_ocr),
             contenedor_str,
             permiso, estado,
         )
@@ -7024,6 +7052,8 @@ class App(ctk.CTk):
                 "Contenedor": ok_contenedor,
                 "Permiso": ok_permiso,
             },
+            "shared_excels": shared_excels,
+            "shared_neto_sum": shared_neto_sum,
         }
 
         # Log
@@ -7052,8 +7082,21 @@ class App(ctk.CTk):
             geom = self._get_popup_geometry(520, 420, level)
             ancho = int(geom.split("x")[0])
 
+            # Check if shared trip
+            shared_excels = datos.get("shared_excels", [])
+            shared_neto_sum = datos.get("shared_neto_sum", 0)
+            is_shared = len(shared_excels) > 1
+
+            # ── Number formatters ──
+            _fmt_kg = self._fmt_kg
+            _fmt_dni = self._fmt_dni
+
+            if is_shared:
+                geom = self._get_popup_geometry(720, 420, level)
+                ancho = int(geom.split("x")[0])
+
             dlg = ctk.CTkToplevel(self)
-            dlg.title(f"Comparación — {datos['archivo']}")
+            dlg.title(f"Comparación — {datos['archivo']}" + (" (Compartido)" if is_shared else ""))
             dlg.transient(self)
             dlg.grab_set()
             dlg.resizable(False, False)
@@ -7063,17 +7106,34 @@ class App(ctk.CTk):
             top_bar.pack(fill="x", padx=12, pady=(12, 0))
             top_bar.pack_propagate(False)
 
-            for col_i, txt in enumerate(["Campo", "Ticket (OCR)", "Contenedor (Excel)"]):
-                lbl = ctk.CTkLabel(
-                    top_bar, text=txt, width=120 if col_i == 0 else 160,
-                    font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
-                    text_color=Palette.TEXT_SECONDARY,
-                )
-                kwargs = {"side": "left", "padx": 4}
-                if col_i > 0:
-                    kwargs["fill"] = "x"
-                    kwargs["expand"] = True
-                lbl.pack(**kwargs)
+            # Grid header: align with body columns
+            top_bar.grid_columnconfigure(0, minsize=120, weight=0)
+
+            if is_shared:
+                # 4 columns: Campo | Ticket | Excel 1 | Excel 2
+                headers = ["Campo", "Ticket (OCR)"]
+                for i, ex in enumerate(shared_excels):
+                    headers.append(f"Excel {i+1}")
+                for col_i in range(1, len(headers)):
+                    top_bar.grid_columnconfigure(col_i, weight=1)
+                for col_i, txt in enumerate(headers):
+                    lbl = ctk.CTkLabel(
+                        top_bar, text=txt, width=120 if col_i == 0 else 160,
+                        font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
+                        text_color=Palette.TEXT_SECONDARY,
+                    )
+                    lbl.grid(row=0, column=col_i, sticky="ew", padx=4, pady=4)
+            else:
+                # Normal 3 columns: Campo | Ticket | Contenedor
+                for col_i in range(1, 3):
+                    top_bar.grid_columnconfigure(col_i, weight=1)
+                for col_i, txt in enumerate(["Campo", "Ticket (OCR)", "Contenedor (Excel)"]):
+                    lbl = ctk.CTkLabel(
+                        top_bar, text=txt, width=120 if col_i == 0 else 160,
+                        font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
+                        text_color=Palette.TEXT_SECONDARY,
+                    )
+                    lbl.grid(row=0, column=col_i, sticky="ew", padx=4, pady=4)
 
             # Font level override selector
             override_menu = ctk.CTkOptionMenu(
@@ -7086,15 +7146,18 @@ class App(ctk.CTk):
             override_menu.set(str(level))
             override_menu.pack(side="right", padx=(0, 8))
 
-            # Cuerpo: frame normal sin scroll
+            # Cuerpo: grid para columnas alineadas
             body = ctk.CTkFrame(dlg, fg_color="transparent")
-            body.pack(fill="x", padx=12, pady=8)
+            body.pack(fill="both", expand=True, padx=12, pady=8)
+            body.grid_columnconfigure(0, minsize=120, weight=0)  # Campo — fijo
+            for col_i in range(1, 4 if is_shared else 3):
+                body.grid_columnconfigure(col_i, weight=1)
 
             campos = [("Camion", "Patente"), ("Semirremolque", "Semirremolque"), ("Conductor", "Conductor"),
                        ("DNI", "DNI"), ("Neto (kg)", "Neto (kg)"), ("Tara (kg)", "Tara (kg)"),
                        ("Contenedor", "Contenedor"), ("Permiso", "Permiso")]
 
-            for label, key in campos:
+            for row_i, (label, key) in enumerate(campos):
                 val_ticket = datos["ticket"].get(key, "")
                 val_cont   = datos["contenedor"].get(key, "")
                 ok         = datos["ok"].get(key, False)
@@ -7102,22 +7165,95 @@ class App(ctk.CTk):
                 bg = "#C8FFC8" if ok else "#FFC8C8"
                 fg = "#006400" if ok else "#8B0000"
 
-                row = ctk.CTkFrame(body, fg_color="transparent")
-                row.pack(fill="x", pady=1)
-
                 ctk.CTkLabel(
-                    row, text=label, width=120, anchor="w",
+                    body, text=label, width=120, anchor="w",
                     font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"], weight="bold"),
                     text_color=Palette.TEXT_PRIMARY,
-                ).pack(side="left", padx=(4, 0))
+                ).grid(row=row_i, column=0, sticky="w", padx=(4, 0), pady=2)
 
-                for val in [val_ticket, val_cont]:
-                    lbl = ctk.CTkLabel(
-                        row, text=val, width=160, anchor="center",
+                if is_shared:
+                    # Shared: Ticket (col 1) + Excel 1 (col 2) + Excel 2 (col 3)
+                    val_ticket_neto = datos["ticket"].get("Neto (kg)", 0)
+
+                    # ── Column 1: Ticket value (formatted) ──
+                    if key in ("Neto (kg)", "Tara (kg)"):
+                        display_ticket = _fmt_kg(val_ticket)
+                    elif key == "DNI":
+                        display_ticket = _fmt_dni(val_ticket)
+                    else:
+                        display_ticket = val_ticket
+                    ctk.CTkLabel(
+                        body, text=display_ticket, anchor="center",
                         font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
                         fg_color=bg, text_color=fg, corner_radius=4,
-                    )
-                    lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+                    ).grid(row=row_i, column=1, sticky="ew", padx=4, pady=2)
+
+                    # ── Columns 2..N: each Excel ──
+                    for col_i, ex in enumerate(shared_excels, start=2):
+                        ex_camion = ex.get("camion", {})
+                        ex_data = ex.get("data", {})
+                        ex_pe = ex.get("pe", "")
+
+                        if key == "Neto (kg)":
+                            # Neto: show individual + total
+                            neto_individual = ex_camion.get("peso_carga", 0)
+                            val = f"{_fmt_kg(neto_individual)} ({_fmt_kg(shared_neto_sum)})"
+                            try:
+                                ticket_neto = float(str(val_ticket_neto).replace('.', '').replace(',', '.'))
+                                sums_ok = abs(shared_neto_sum - ticket_neto) < 1
+                            except (ValueError, AttributeError):
+                                sums_ok = False
+                            cell_bg = "#C8FFC8" if sums_ok else "#FFC8C8"
+                            cell_fg = "#006400" if sums_ok else "#8B0000"
+                        elif key == "Tara (kg)":
+                            val = _fmt_kg(ex_camion.get("tara_cont", ""))
+                            cell_bg, cell_fg = bg, fg
+                        elif key == "Patente":
+                            val = str(ex_camion.get("patente_camion", ""))
+                            cell_bg, cell_fg = bg, fg
+                        elif key == "Semirremolque":
+                            val = str(ex_camion.get("patente_semi", ""))
+                            cell_bg, cell_fg = bg, fg
+                        elif key == "Conductor":
+                            val = str(ex_camion.get("conductor", ""))
+                            cell_bg, cell_fg = bg, fg
+                        elif key == "DNI":
+                            val = _fmt_dni(ex_camion.get("dni", ""))
+                            cell_bg, cell_fg = bg, fg
+                        elif key == "Contenedor":
+                            val = str(ex_camion.get("contenedor", ex_data.get("contenedor", "")))
+                            cell_bg, cell_fg = bg, fg
+                        elif key == "Permiso":
+                            val = str(ex_pe)
+                            cell_bg, cell_fg = bg, fg
+                        else:
+                            val = ""
+                            cell_bg, cell_fg = bg, fg
+
+                        lbl = ctk.CTkLabel(
+                            body, text=val, anchor="center",
+                            font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
+                            fg_color=cell_bg, text_color=cell_fg, corner_radius=4,
+                        )
+                        lbl.grid(row=row_i, column=col_i, sticky="ew", padx=4, pady=2)
+                else:
+                    # Normal: Ticket + single Excel — format numbers
+                    if key in ("Neto (kg)", "Tara (kg)"):
+                        display_ticket = _fmt_kg(val_ticket)
+                        display_cont = _fmt_kg(val_cont)
+                    elif key == "DNI":
+                        display_ticket = _fmt_dni(val_ticket)
+                        display_cont = _fmt_dni(val_cont)
+                    else:
+                        display_ticket = val_ticket
+                        display_cont = val_cont
+                    for col_i, val in enumerate([display_ticket, display_cont], start=1):
+                        lbl = ctk.CTkLabel(
+                            body, text=val, anchor="center",
+                            font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
+                            fg_color=bg, text_color=fg, corner_radius=4,
+                        )
+                        lbl.grid(row=row_i, column=col_i, sticky="ew", padx=4, pady=2)
 
             # Leyenda al pie
             leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
@@ -7571,6 +7707,21 @@ class App(ctk.CTk):
             command=self._cargar_datos_seleccionar_pdfs,
         )
         self.btn_controlar_tickets.pack(side="left", padx=(10, 2), pady=5)
+
+        self._ct_auto_switch = ctk.CTkSwitch(
+            toolbar, text="Auto",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            variable=self._ct_auto_var,
+            progress_color=Palette.ACCENT,
+            button_color=Palette.TEXT_SECONDARY,
+            button_hover_color=Palette.TEXT_PRIMARY,
+            command=self._cargar_datos_switch_toggle,
+        )
+        self._ct_auto_switch.pack(side="left", padx=2, pady=5)
+        # Restore persisted state
+        if self.config.get("cargar_datos_auto", False):
+            self._ct_auto_var.set(True)
+            self.btn_controlar_tickets.configure(text="Controlar Tickets ⚡")
 
         # ── Separador vertical ──────────────────────────────────────
         ctk.CTkFrame(
@@ -8207,17 +8358,18 @@ class App(ctk.CTk):
             top_bar.pack(fill="x", padx=12, pady=(12, 0))
             top_bar.pack_propagate(False)
 
+            # Grid header: align with body columns
+            top_bar.grid_columnconfigure(0, minsize=120, weight=0)
+            top_bar.grid_columnconfigure(1, weight=1)
+            top_bar.grid_columnconfigure(2, weight=1)
+
             for col_i, txt in enumerate(["Campo", "PDF (Coordinación)", "Excel (Choferes)"]):
                 lbl = ctk.CTkLabel(
                     top_bar, text=txt, width=120 if col_i == 0 else 280,
                     font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["header"], weight="bold"),
                     text_color=Palette.TEXT_SECONDARY,
                 )
-                kwargs = {"side": "left", "padx": 4}
-                if col_i > 0:
-                    kwargs["fill"] = "x"
-                    kwargs["expand"] = True
-                lbl.pack(**kwargs)
+                lbl.grid(row=0, column=col_i, sticky="ew", padx=4, pady=4)
 
             # Font level override selector
             override_menu = ctk.CTkOptionMenu(
@@ -8230,11 +8382,14 @@ class App(ctk.CTk):
             override_menu.set(str(level))
             override_menu.pack(side="right", padx=(0, 8))
 
-            # ── Cuerpo: frame normal sin scroll ─────────────────────────
+            # ── Cuerpo: grid para columnas alineadas (igual que Control Final) ──
             body = ctk.CTkFrame(dlg, fg_color="transparent")
-            body.pack(fill="x", padx=12, pady=8)
+            body.pack(fill="both", expand=True, padx=12, pady=8)
+            body.grid_columnconfigure(0, minsize=120, weight=0)  # Campo — fijo
+            body.grid_columnconfigure(1, weight=1)  # PDF — expand
+            body.grid_columnconfigure(2, weight=1)  # Excel — expand
 
-            for campo, c in comps.items():
+            for row_i, (campo, c) in enumerate(comps.items()):
                 etq = etiquetas.get(campo, campo)
                 v_pdf = c["pdf"] or "—"
                 v_xls = c["excel"] or "—"
@@ -8243,22 +8398,19 @@ class App(ctk.CTk):
                 bg = "#C8FFC8" if ok else "#FFC8C8"
                 fg = "#006400" if ok else "#8B0000"
 
-                row = ctk.CTkFrame(body, fg_color="transparent")
-                row.pack(fill="x", pady=1)
-
                 ctk.CTkLabel(
-                    row, text=etq, width=120, anchor="w",
+                    body, text=etq, width=120, anchor="w",
                     font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"], weight="bold"),
                     text_color=Palette.TEXT_PRIMARY,
-                ).pack(side="left", padx=(4, 0))
+                ).grid(row=row_i, column=0, sticky="w", padx=(4, 0), pady=2)
 
-                for val in [v_pdf, v_xls]:
+                for col_i, val in enumerate([v_pdf, v_xls], start=1):
                     lbl = ctk.CTkLabel(
-                        row, text=val, width=280, anchor="center",
+                        body, text=val, anchor="center",
                         font=ctk.CTkFont(family=FONT_FAMILY, size=fsizes["data"]),
                         fg_color=bg, text_color=fg, corner_radius=4,
                     )
-                    lbl.pack(side="left", padx=4, pady=2, fill="x", expand=True)
+                    lbl.grid(row=row_i, column=col_i, sticky="ew", padx=4, pady=2)
 
             # ── Leyenda al pie (centrada) ─────────────────────────────
             leyenda = ctk.CTkFrame(dlg, fg_color="transparent")
@@ -8438,10 +8590,12 @@ class App(ctk.CTk):
             if not selected:
                 return
 
-            # Collect all PDFs + Excel from selected folders
-            # Filter out permisos de exportación (YY069EC*.pdf) — not tickets
+            # Collect PDFs + Excel from selected folders
+            # Only scan_* (API Vision tickets), get* (Salidas de Aduana),
+            # and YYAR* (MIC/DTA terrestre, e.g. 26AR240914H)
             import re as _re
             _permiso_pat = _re.compile(r'^\d{2}069EC', _re.IGNORECASE)
+            _mic_pat = _re.compile(r'^\d{2}AR', _re.IGNORECASE)
             all_pdfs = []
             all_excels = []
             for carp in selected:
@@ -8449,6 +8603,11 @@ class App(ctk.CTk):
                     if f.is_file() and f.name.lower().endswith('.pdf'):
                         if _permiso_pat.match(f.name):
                             continue  # skip permisos de exportación
+                        name_lower = f.name.lower()
+                        if not (name_lower.startswith("scan")
+                                or name_lower.startswith("get")
+                                or _mic_pat.match(f.name)):
+                            continue  # only scan_*, get*, and YYAR* (MIC) PDFs
                         all_pdfs.append(f.path)
                 if carp["excel_path"]:
                     all_excels.append(carp["excel_path"])
@@ -8550,7 +8709,6 @@ class App(ctk.CTk):
             tickets_pdf = []   # scanned, need OCR
             aduanas_data = []  # PLT / Salida Aduana (texto)
             mic_data = []      # MIC/DTA (texto)
-            modo = "flexi"     # por defecto
 
             for ruta in pdf_paths:
                 import fitz
@@ -8565,22 +8723,21 @@ class App(ctk.CTk):
                     continue
 
                 if "MIC/DTA" in text.upper() or "MANIFIESTO INTERNACIONAL DE CARGA" in text.upper():
-                    # MIC/DTA → activa modo terrestre
+                    # MIC/DTA → terrestre
                     md = procesar_tickets.extraer_mic_dta(ruta)
                     if "_error" not in md:
                         md["_archivo"] = os.path.basename(ruta)
                         mic_data.append(md)
-                    modo = "terrestre"
                 elif "SALIDA DE ZONA PRIMARIA" in text.upper():
                     # PLT Aduana
-                    data = procesar_tickets.extraer_salida_aduana(ruta, modo=modo)
+                    data = procesar_tickets.extraer_salida_aduana(ruta, modo="flexi")
                     data["_archivo"] = os.path.basename(ruta)
                     aduanas_data.append(data)
                 else:
                     tickets_pdf.append(ruta)
 
-            self._log(f"[Control Final] modo={modo}, {len(tickets_pdf)} tickets, "
-                      f"{len(aduanas_data)} aduanas, {len(mic_data)} mic/dta")
+            self._log(f"[Control Final] {len(tickets_pdf)} tickets, "
+                      f"{len(aduanas_data)} salidas aduana, {len(mic_data)} mic/dta")
 
             # 2. OCR tickets
             self._contenedores_cache = {}
@@ -8658,90 +8815,124 @@ class App(ctk.CTk):
             else:
                 textos_por_pdf = procesar_tickets.pdfs_a_texto_batch(tickets_pdf, engine="paddleocr")
 
-            # 3. Build lookup structures
+            # 3. Build ALL lookup structures (terrestre + flexi)
             self._log(f"[Control Final] Procesando tickets...")
+            import re as _re
 
-            if modo == "terrestre":
-                # ── Terrestre: match por patente → precinto → DNI ──
-                import re as _re
+            def _norm_pat_match(s):
+                """Normalizar patente: sacar espacios, uppercase."""
+                if not s: return ""
+                return _re.sub(r'\s+', '', s).upper()
 
-                def _norm_pat_match(s):
-                    """Normalizar patente: sacar espacios, uppercase."""
-                    if not s: return ""
-                    return _re.sub(r'\s+', '', s).upper()
+            # ── Aduana terrestre lookups (MIC/DTA) ──
+            aduana_por_patente = {}
+            aduana_por_precinto_mic = {}
+            aduana_por_dni = {}
+            for md in mic_data:
+                pat = _norm_pat_match(md.get("patente_camion", ""))
+                if pat: aduana_por_patente[pat] = md
+                if md.get("precinto"):
+                    for p in md["precinto"].upper().split():
+                        p = p.strip()
+                        if p: aduana_por_precinto_mic[p] = md
+                dni = _re.sub(r'\D', '', md.get("cuil", ""))
+                if dni: aduana_por_dni[dni] = md
 
-                # ── Build lookup structures desde MIC/DTA ──
-                aduana_por_patente = {}
-                aduana_por_precinto = {}
-                aduana_por_dni = {}
-                for md in mic_data:
-                    pat = _norm_pat_match(md.get("patente_camion", ""))
-                    if pat: aduana_por_patente[pat] = md
-                    if md.get("precinto"):
-                        for p in md["precinto"].upper().split():
-                            p = p.strip()
-                            if p: aduana_por_precinto[p] = md
-                    dni = _re.sub(r'\D', '', md.get("cuil", ""))
-                    if dni: aduana_por_dni[dni] = md
+            # ── Aduana flexi lookups (Salida de Aduana) ──
+            aduana_por_contenedor = {}
+            aduana_por_precinto_aduana = {}
+            for ad in aduanas_data:
+                if ad.get("contenedor"):
+                    aduana_por_contenedor[ad["contenedor"].upper()] = ad
+                if ad.get("precinto"):
+                    for p in ad["precinto"].upper().split():
+                        p = p.strip()
+                        if p: aduana_por_precinto_aduana[p] = ad
 
-                # Excel lookups
-                excel_por_patente = {}
-                excel_por_precinto = {}
-                excel_por_dni = {}
-                for k, v in self._contenedores_cache.items():
-                    camiones = v.get("camiones", [])
-                    for ci, cam in enumerate(camiones):
-                        pat = _norm_pat_match(cam.get("patente_camion", ""))
-                        if pat: excel_por_patente[pat] = (v, ci)
-                        prec = cam.get("precinto", "").upper().strip()
-                        if prec: excel_por_precinto[prec] = (v, ci)
-                        dni = _re.sub(r'\D', '', str(cam.get("dni", "")))
-                        if dni: excel_por_dni[dni] = (v, ci)
+            # ── Excel lookups (ALL cache, list-based for shared trips) ──
+            excel_por_patente = {}  # patente -> [(cont_data, cont_idx), ...]
+            excel_por_precinto = {}
+            excel_por_dni = {}
+            excel_por_contenedor = {}
+            for k, v in self._contenedores_cache.items():
+                camiones = v.get("camiones", [])
+                for ci, cam in enumerate(camiones):
+                    pat = _norm_pat_match(cam.get("patente_camion", ""))
+                    if pat:
+                        excel_por_patente.setdefault(pat, []).append((v, ci))
+                    prec = cam.get("precinto", "").upper().strip()
+                    if prec:
+                        excel_por_precinto.setdefault(prec, []).append((v, ci))
+                    dni = _re.sub(r'\D', '', str(cam.get("dni", "")))
+                    if dni:
+                        excel_por_dni.setdefault(dni, []).append((v, ci))
+                    ctn = _re.sub(r'[\s\-]+', '', cam.get("contenedor", "").upper().strip())
+                    if ctn:
+                        excel_por_contenedor.setdefault(ctn, []).append((v, ci))
 
-                todos_pdfs = set(tickets_pdf)
-                for ruta in todos_pdfs:
-                    stem = os.path.splitext(os.path.basename(ruta))[0]
-                    try:
-                        if stem in api_datos_raw:
-                            raw = api_datos_raw[stem]
-                            ticket_data = {
-                                "archivo":   stem,
-                                "Patente":   raw.get("Patente", ""),
-                                "Semirremolque": raw.get("Semirremolque", ""),
-                                "Conductor": raw.get("Conductor", ""),
-                                "DNI":       raw.get("DNI", ""),
-                                "Neto":      raw.get("Neto", ""),
-                                "Tara Contenedor": raw.get("Tara Contenedor", ""),
-                                "Contenedor": raw.get("Contenedor", ""),
-                                "Permiso":   raw.get("Permiso", ""),
-                            }
-                        else:
-                            texto = textos_por_pdf.get(stem, "")
-                            if not texto:
-                                continue
-                            extraido = procesar_tickets.extraer_datos(texto)
-                            ticket_data = {
-                                "archivo":   stem,
-                                "Patente":   extraido.get("patente", ""),
-                                "Semirremolque": extraido.get("semi", ""),
-                                "Conductor": extraido.get("conductor", ""),
-                                "DNI":       extraido.get("dni", ""),
-                                "Neto":      extraido.get("neto", ""),
-                                "Tara Contenedor": extraido.get("tara", ""),
-                                "Contenedor": extraido.get("contenedor", ""),
-                                "Permiso":   extraido.get("oferta", ""),
-                            }
+            # Merged precinto aduana lookup (try both MIC and Salida)
+            aduana_por_precinto_all = {**aduana_por_precinto_mic, **aduana_por_precinto_aduana}
 
-                        patente_ticket = _norm_pat_match(ticket_data.get("Patente", ""))
-                        dni_ticket = _re.sub(r'\D', '', ticket_data.get("DNI", ""))
+            # 4. Process each ticket — try terrestre first, then flexi
+            todos_pdfs = set(tickets_pdf)
+            for ruta in todos_pdfs:
+                stem = os.path.splitext(os.path.basename(ruta))[0]
+                try:
+                    shared_excel_matches = []
+                    modo_result = "flexi"  # default per-ticket
 
-                        # ── Paso 1: Match por patente ──
-                        cont_data, cont_idx = excel_por_patente.get(patente_ticket, (None, -1))
+                    # Build ticket_data
+                    if stem in api_datos_raw:
+                        raw = api_datos_raw[stem]
+                        ticket_data = {
+                            "archivo":   stem,
+                            "Patente":   raw.get("Patente", ""),
+                            "Semirremolque": raw.get("Semirremolque", ""),
+                            "Conductor": raw.get("Conductor", ""),
+                            "DNI":       raw.get("DNI", ""),
+                            "Neto":      raw.get("Neto", ""),
+                            "Tara Contenedor": raw.get("Tara Contenedor", ""),
+                            "Contenedor": raw.get("Contenedor", ""),
+                            "Permiso":   raw.get("Permiso", ""),
+                        }
+                    else:
+                        texto = textos_por_pdf.get(stem, "")
+                        if not texto:
+                            continue
+                        extraido = procesar_tickets.extraer_datos(texto)
+                        ticket_data = {
+                            "archivo":   stem,
+                            "Patente":   extraido.get("patente", ""),
+                            "Semirremolque": extraido.get("semi", ""),
+                            "Conductor": extraido.get("conductor", ""),
+                            "DNI":       extraido.get("dni", ""),
+                            "Neto":      extraido.get("neto", ""),
+                            "Tara Contenedor": extraido.get("tara", ""),
+                            "Contenedor": extraido.get("contenedor", ""),
+                            "Permiso":   extraido.get("oferta", ""),
+                        }
+
+                    patente_ticket = _norm_pat_match(ticket_data.get("Patente", ""))
+                    dni_ticket = _re.sub(r'\D', '', ticket_data.get("DNI", ""))
+                    contenedor_ticket = _re.sub(r'[\s\-]+', '',
+                                                ticket_data.get("Contenedor", "").upper().strip())
+
+                    aduana = {}
+                    cont_data = None
+                    cont_idx = -1
+
+                    # ── Step 1: Try terrestre (patente → MIC/DTA + patente → Excel) ──
+                    if patente_ticket:
                         aduana = aduana_por_patente.get(patente_ticket, {})
+                        all_excel = excel_por_patente.get(patente_ticket, [])
+                        if all_excel:
+                            cont_data, cont_idx = all_excel[0]
+                            shared_excel_matches = all_excel[1:]
+                        if aduana:
+                            modo_result = "terrestre"
 
-                        # Si no hay match directo, probar variantes O/0 en patente
+                        # Variants O/0 (Mercosur patentes)
                         if not cont_data and not aduana:
-                            # Generar variantes: O⇄0 en nuevas patentes Mercosur (AB123CD)
                             for i, ch in enumerate(patente_ticket):
                                 variants = set()
                                 if ch == 'O': variants.add(patente_ticket[:i] + '0' + patente_ticket[i+1:])
@@ -8750,190 +8941,125 @@ class App(ctk.CTk):
                                 if ch == '1': variants.add(patente_ticket[:i] + 'I' + patente_ticket[i+1:])
                                 if ch == 'S': variants.add(patente_ticket[:i] + '5' + patente_ticket[i+1:])
                                 if ch == '5': variants.add(patente_ticket[:i] + 'S' + patente_ticket[i+1:])
-                                for v in variants:
-                                    if not cont_data and v in excel_por_patente:
-                                        cont_data, cont_idx = excel_por_patente[v]
-                                        self._log(f"  ⚠ Patente OCR corregida: {patente_ticket}→{v} (Excel)")
-                                    if not aduana and v in aduana_por_patente:
-                                        aduana = aduana_por_patente[v]
-                                        self._log(f"  ⚠ Patente OCR corregida: {patente_ticket}→{v} (Aduana)")
+                                for vr in variants:
+                                    if vr in excel_por_patente:
+                                        vm = excel_por_patente[vr]
+                                        if not cont_data:
+                                            cont_data, cont_idx = vm[0]
+                                            shared_excel_matches = vm[1:] if len(vm) > 1 else []
+                                            self._log(f"  ⚠ Patente OCR corregida: {patente_ticket}→{vr} (Excel)")
+                                    if not aduana and vr in aduana_por_patente:
+                                        aduana = aduana_por_patente[vr]
+                                        self._log(f"  ⚠ Patente OCR corregida: {patente_ticket}→{vr} (Aduana)")
                                     if cont_data and aduana: break
                                 if cont_data and aduana: break
 
-                        # ── Paso 2: Fallback por precinto ──
-                        if not cont_data or not aduana:
-                            # 2a: Tenemos Excel pero falta Aduana
-                            if cont_data and cont_idx >= 0 and not aduana:
-                                cam = cont_data["camiones"][cont_idx]
-                                prec = cam.get("precinto", "").upper().strip()
-                                if prec and prec in aduana_por_precinto:
-                                    aduana = aduana_por_precinto[prec]
-                                    self._log(f"  ⚠ Aduana x precinto Excel: {stem} — precinto={prec}")
+                    # ── Step 2: If no terrestre match, try flexi (contenedor → Salida Aduana) ──
+                    if not aduana and contenedor_ticket:
+                        aduana = aduana_por_contenedor.get(contenedor_ticket, {})
+                        if aduana:
+                            modo_result = "flexi"
+                            self._log(f"  ✓ {stem}: flexi match por contenedor='{contenedor_ticket}'")
+                            # Match Excel by contenedor
+                            all_excel = excel_por_contenedor.get(contenedor_ticket, [])
+                            if all_excel:
+                                cont_data, cont_idx = all_excel[0]
+                                shared_excel_matches = all_excel[1:]
 
-                            # 2b: Tenemos Aduana pero falta Excel
-                            if aduana and (not cont_data or cont_idx < 0):
-                                prec = aduana.get("precinto", "").upper().strip()
-                                for p in prec.split():
-                                    if p in excel_por_precinto:
-                                        cont_data, cont_idx = excel_por_precinto[p]
-                                        self._log(f"  ⚠ Excel x precinto Aduana: {stem} — precinto={p}")
-                                        break
+                    # ── Step 3: Fallback por precinto ──
+                    if not cont_data or not aduana:
+                        # 3a: Have Excel but need Aduana
+                        if cont_data and cont_idx >= 0 and not aduana:
+                            cam = cont_data["camiones"][cont_idx]
+                            prec = cam.get("precinto", "").upper().strip()
+                            if prec and prec in aduana_por_precinto_all:
+                                aduana = aduana_por_precinto_all[prec]
+                                modo_result = "terrestre" if prec in aduana_por_precinto_mic else "flexi"
+                                self._log(f"  ⚠ Aduana x precinto Excel: {stem} — precinto={prec}")
 
-                            # 2c: Sin patente match: DNI primero (único, no cruza)
-                            if not cont_data and not aduana and dni_ticket:
-                                if dni_ticket in excel_por_dni:
-                                    cont_data, cont_idx = excel_por_dni[dni_ticket]
-                                    self._log(f"  ⚠ Excel x DNI: {stem} — dni={dni_ticket}")
-                                if dni_ticket in aduana_por_dni:
-                                    aduana = aduana_por_dni[dni_ticket]
-                                    self._log(f"  ⚠ Aduana x DNI: {stem} — dni={dni_ticket}")
-
-                            # 2d: Después de DNI, puentear lo que falte
-                            if not cont_data or not aduana:
-                                if cont_data and cont_idx >= 0 and not aduana:
-                                    cam = cont_data["camiones"][cont_idx]
-                                    prec = cam.get("precinto", "").upper().strip()
-                                    if prec and prec in aduana_por_precinto:
-                                        aduana = aduana_por_precinto[prec]
-                                        self._log(f"  ⚠ Aduana x precinto post-DNI: {stem} — precinto={prec}")
-                                if aduana and (not cont_data or cont_idx < 0):
-                                    prec = aduana.get("precinto", "").upper().strip()
-                                    for p in prec.split():
-                                        if p in excel_por_precinto:
-                                            cont_data, cont_idx = excel_por_precinto[p]
-                                            self._log(f"  ⚠ Excel x precinto post-DNI: {stem} — precinto={p}")
-                                            break
-
-                            # 2e: Sin ningún match, escanear todo por precinto
-                            if not cont_data and not aduana:
-                                for md in mic_data:
-                                    prec = md.get("precinto", "").upper().strip()
-                                    for p in prec.split():
-                                        if p in excel_por_precinto:
-                                            cont_data, cont_idx = excel_por_precinto[p]
-                                            aduana = md
-                                            self._log(f"  ⚠ Sin match x precinto (último): {stem} — precinto={p}")
-                                            break
-                                    if cont_data: break
-
-                        result = self._build_fila_control_final(
-                            ticket_data, cont_data, cont_idx, aduana, stem, modo=modo
-                        )
-                        if result:
-                            self.log_queue.put(("_CONTROL_FINAL_RESULT_", result))
-                            result_count += 1
-
-                    except Exception as e:
-                        self._log(f"  ✗ Error {stem}: {e}")
-                        import traceback
-                        self._log(traceback.format_exc())
-
-            else:
-                # ── Flexi/ISO: match por contenedor (comportamiento actual) ──
-                aduana_por_contenedor = {}
-                aduana_por_precinto = {}
-                for ad in aduanas_data:
-                    if ad.get("contenedor"):
-                        aduana_por_contenedor[ad["contenedor"].upper()] = ad
-                    if ad.get("precinto"):
-                        for p in ad["precinto"].upper().split():
-                            p = p.strip()
-                            if p:
-                                aduana_por_precinto[p] = ad
-
-                todos_pdfs = set(tickets_pdf)
-                for ruta in todos_pdfs:
-                    stem = os.path.splitext(os.path.basename(ruta))[0]
-                    try:
-                        if stem in api_datos_raw:
-                            raw = api_datos_raw[stem]
-                            ticket_data = {
-                                "archivo":   stem,
-                                "Patente":   raw.get("Patente", ""),
-                                "Semirremolque": raw.get("Semirremolque", ""),
-                                "Conductor": raw.get("Conductor", ""),
-                                "DNI":       raw.get("DNI", ""),
-                                "Neto":      raw.get("Neto", ""),
-                                "Tara Contenedor": raw.get("Tara Contenedor", ""),
-                                "Contenedor": raw.get("Contenedor", ""),
-                                "Permiso":   raw.get("Permiso", ""),
-                            }
-                        else:
-                            texto = textos_por_pdf.get(stem, "")
-                            if not texto:
-                                continue
-                            extraido = procesar_tickets.extraer_datos(texto)
-                            ticket_data = {
-                                "archivo":   stem,
-                                "Patente":   extraido.get("patente", ""),
-                                "Semirremolque": extraido.get("semi", ""),
-                                "Conductor": extraido.get("conductor", ""),
-                                "DNI":       extraido.get("dni", ""),
-                                "Neto":      extraido.get("neto", ""),
-                                "Tara Contenedor": extraido.get("tara", ""),
-                                "Contenedor": extraido.get("contenedor", ""),
-                                "Permiso":   extraido.get("oferta", ""),
-                            }
-
-                        # Match contenedor (normalizar espacios/guiones)
-                        contenedor_num = ticket_data.get("Contenedor", "").upper().strip()
-                        import re as _re
-                        contenedor_num_norm = _re.sub(r'[\s\-]+', '', contenedor_num)
-                        self._log(f"  {stem}: contenedor='{contenedor_num}' (norm='{contenedor_num_norm}')")
-
-                        # Match Excel contenedores
-                        cont_data = None
-                        cont_idx = -1
-                        for k, v in self._contenedores_cache.items():
-                            camiones = v.get("camiones", [])
-                            for ci, cam in enumerate(camiones):
-                                c_raw = cam.get("contenedor", "").upper().strip()
-                                c_norm = _re.sub(r'[\s\-]+', '', c_raw)
-                                if c_norm and c_norm == contenedor_num_norm:
-                                    cont_data = v
-                                    cont_idx = ci
+                        # 3b: Have Aduana but need Excel
+                        if aduana and (not cont_data or cont_idx < 0):
+                            prec = aduana.get("precinto", "").upper().strip()
+                            for p in prec.split():
+                                if p in excel_por_precinto:
+                                    matches = excel_por_precinto[p]
+                                    cont_data, cont_idx = matches[0]
+                                    shared_excel_matches = matches[1:] if len(matches) > 1 else []
+                                    self._log(f"  ⚠ Excel x precinto Aduana: {stem} — precinto={p}")
                                     break
-                            if cont_data:
-                                break
 
-                        # Match Aduana by contenedor
-                        aduana = aduana_por_contenedor.get(contenedor_num_norm, {})
+                    # ── Step 3c: DNI fallback ──
+                    if not cont_data and not aduana and dni_ticket:
+                        if dni_ticket in excel_por_dni:
+                            matches = excel_por_dni[dni_ticket]
+                            cont_data, cont_idx = matches[0]
+                            shared_excel_matches = matches[1:] if len(matches) > 1 else []
+                            self._log(f"  ⚠ Excel x DNI: {stem} — dni={dni_ticket}")
+                        if dni_ticket in aduana_por_dni:
+                            aduana = aduana_por_dni[dni_ticket]
+                            modo_result = "terrestre"
+                            self._log(f"  ⚠ Aduana x DNI: {stem} — dni={dni_ticket}")
 
-                        # Fallback por precinto
-                        if not cont_data or not aduana:
-                            precinto_excel = ""
-                            if cont_data and cont_idx >= 0:
-                                cam = cont_data.get("camiones", [])
-                                if cont_idx < len(cam):
-                                    precinto_excel = cam[cont_idx].get("precinto", "").upper().strip()
-                            else:
-                                for k, v in self._contenedores_cache.items():
-                                    for ci, cam in enumerate(v.get("camiones", [])):
-                                        p = cam.get("precinto", "").upper().strip()
-                                        if p and p in aduana_por_precinto:
-                                            cont_data = v
-                                            cont_idx = ci
-                                            precinto_excel = p
-                                            self._log(f"  ⚠ Fallback precinto: {stem} — Excel camión {ci} precinto={p}")
-                                            break
-                                    if cont_data:
-                                        break
-                            if precinto_excel and precinto_excel in aduana_por_precinto:
-                                if not aduana:
-                                    aduana = aduana_por_precinto[precinto_excel]
-                                    self._log(f"  ⚠ Aduana encontrada por precinto: {precinto_excel}")
+                    # ── Step 3d: Puente post-DNI ──
+                    if not cont_data or not aduana:
+                        if cont_data and cont_idx >= 0 and not aduana:
+                            cam = cont_data["camiones"][cont_idx]
+                            prec = cam.get("precinto", "").upper().strip()
+                            if prec and prec in aduana_por_precinto_all:
+                                aduana = aduana_por_precinto_all[prec]
+                                self._log(f"  ⚠ Aduana x precinto post-DNI: {stem} — precinto={prec}")
+                        if aduana and (not cont_data or cont_idx < 0):
+                            prec = aduana.get("precinto", "").upper().strip()
+                            for p in prec.split():
+                                if p in excel_por_precinto:
+                                    matches = excel_por_precinto[p]
+                                    cont_data, cont_idx = matches[0]
+                                    shared_excel_matches = matches[1:] if len(matches) > 1 else []
+                                    self._log(f"  ⚠ Excel x precinto post-DNI: {stem} — precinto={p}")
+                                    break
 
-                        result = self._build_fila_control_final(
-                            ticket_data, cont_data, cont_idx, aduana, stem, modo=modo
-                        )
-                        if result:
-                            self.log_queue.put(("_CONTROL_FINAL_RESULT_", result))
-                            result_count += 1
+                    # ── Step 3e: Brute force — scan all MIC by precinto ──
+                    if not cont_data and not aduana:
+                        for md in mic_data:
+                            prec = md.get("precinto", "").upper().strip()
+                            for p in prec.split():
+                                if p in excel_por_precinto:
+                                    matches = excel_por_precinto[p]
+                                    cont_data, cont_idx = matches[0]
+                                    shared_excel_matches = matches[1:] if len(matches) > 1 else []
+                                    aduana = md
+                                    modo_result = "terrestre"
+                                    self._log(f"  ⚠ Sin match x precinto (último): {stem} — precinto={p}")
+                                    break
+                            if cont_data: break
 
-                    except Exception as e:
-                        self._log(f"  ✗ Error {stem}: {e}")
-                        import traceback
-                        self._log(traceback.format_exc())
+                    # ── Step 3f: Brute force — scan all Salida Aduana by precinto ──
+                    if not cont_data and not aduana:
+                        for ad in aduanas_data:
+                            prec = ad.get("precinto", "").upper().strip()
+                            for p in prec.split():
+                                if p in excel_por_precinto:
+                                    matches = excel_por_precinto[p]
+                                    cont_data, cont_idx = matches[0]
+                                    shared_excel_matches = matches[1:] if len(matches) > 1 else []
+                                    aduana = ad
+                                    modo_result = "flexi"
+                                    self._log(f"  ⚠ Sin match x precinto (flexi): {stem} — precinto={p}")
+                                    break
+                            if cont_data: break
+
+                    result = self._build_fila_control_final(
+                        ticket_data, cont_data, cont_idx, aduana, stem, modo=modo_result,
+                        shared_excel_matches=shared_excel_matches
+                    )
+                    if result:
+                        self.log_queue.put(("_CONTROL_FINAL_RESULT_", result))
+                        result_count += 1
+
+                except Exception as e:
+                    self._log(f"  ✗ Error {stem}: {e}")
+                    import traceback
+                    self._log(traceback.format_exc())
 
         except Exception as e:
             self._log(f"[Control Final] Error general: {e}")
@@ -8946,11 +9072,14 @@ class App(ctk.CTk):
             self.log_queue.put(("_TAREA_COMPLETA_", None))
 
     def _build_fila_control_final(self, ticket_data, cont_data, cont_idx, aduana, stem,
-                                   modo="flexi"):
+                                   modo="flexi", shared_excel_matches=None):
         """Build row values and comparison data for Control Final.
 
         Args:
             modo: "flexi" (ISO/Flexi containers) or "terrestre" (bulk/granel).
+            shared_excel_matches: list of (cont_data, cont_idx) from additional
+                Excels matching the same truck (shared trips). The primary match
+                is NOT in this list — it's passed via cont_data/cont_idx.
 
         Returns dict with keys:
           valores    → tuple for tree row (11 cols)
@@ -8960,6 +9089,8 @@ class App(ctk.CTk):
           aduana     → dict {Patente Camión, ..., CUIL, Contenedor, ...}
           ok         → dict per field: True if ticket matches reference
           modo       → the mode used
+          shared_excels → list of {peso_carga, archivo} for shared trips (empty if not shared)
+          shared_neto_sum → sum of all Excel peso_carga (0 if not shared)
         """
         import procesar_tickets
         import re as _re
@@ -9038,6 +9169,7 @@ class App(ctk.CTk):
         e_neto = ""
         e_tara = ""
         e_contenedor = ""
+        e_precinto = ""
         e_permiso = ""
         e_peso_flexi = "0"
         if cont_data and cont_idx >= 0:
@@ -9055,6 +9187,34 @@ class App(ctk.CTk):
                 e_permiso    = cont_data.get("pe", "")
                 e_peso_flexi = str(cam.get("peso_flexi", "0"))
         e_dni = _dni_solo(e_dni)
+
+        # ── Shared Excel data ──
+        shared_excels = []
+        shared_neto_sum = 0
+        if shared_excel_matches:
+            for s_data, s_idx in shared_excel_matches:
+                s_camiones = s_data.get("camiones", [])
+                if s_idx < len(s_camiones):
+                    s_cam = s_camiones[s_idx]
+                    s_neto = s_cam.get("peso_carga", 0)
+                    shared_excels.append({
+                        "peso_carga": s_neto,
+                        "archivo": os.path.basename(s_data.get("_archivo", "")),
+                    })
+                    shared_neto_sum += s_neto
+
+        # Also count primary match
+        if cont_data and cont_idx >= 0:
+            camiones = cont_data.get("camiones", [])
+            if cont_idx < len(camiones):
+                primary_neto = camiones[cont_idx].get("peso_carga", 0)
+                shared_excels.insert(0, {
+                    "peso_carga": primary_neto,
+                    "archivo": os.path.basename(cont_data.get("_archivo", "")),
+                })
+                shared_neto_sum += primary_neto
+
+        is_shared = len(shared_excels) > 1
 
         # ── Normalize all values ──
         t_patente    = _norm_pat(t_patente)
@@ -9088,9 +9248,7 @@ class App(ctk.CTk):
 
         # ── Apply terrestre field overrides ──
         if modo == "terrestre":
-            t_tara = "—"
             t_contenedor = "—"
-            e_tara = "—"
             e_contenedor = "—"
             if not a_contenedor:
                 a_contenedor = "—"
@@ -9119,6 +9277,10 @@ class App(ctk.CTk):
             "Precinto": e_precinto,
         }
         dni_key = "DNI" if modo == "terrestre" else "CUIL"
+        # MIC/DTA campo 42/44/46 — shared trip breakdown (terrestre only)
+        a_campo_42 = aduana.get("campo_42", "")
+        a_campo_44 = aduana.get("campo_44", "")
+        a_campo_46 = aduana.get("campo_46", "")
         aduana_d = {
             "PLT": a_plt,
             "Peso Bruto Aduana": a_neto_calc,
@@ -9130,6 +9292,9 @@ class App(ctk.CTk):
             dni_key: a_dni,
             "Contenedor": a_contenedor,
             "Precinto": a_precinto,
+            "campo_42": a_campo_42,
+            "campo_44": a_campo_44,
+            "campo_46": a_campo_46,
         }
 
         # ── 3-way comparison ──
@@ -9242,6 +9407,8 @@ class App(ctk.CTk):
             "aduana": aduana_d,
             "ok": ok_map,
             "modo": modo,
+            "shared_excels": shared_excels,
+            "shared_neto_sum": shared_neto_sum,
         }
 
     def _procesar_resultado_control_final(self, data):
@@ -9266,6 +9433,8 @@ class App(ctk.CTk):
                 "ok": data["ok"],
                 "aduana": data["aduana"],
                 "modo": data.get("modo", "flexi"),
+                "shared_excels": data.get("shared_excels", []),
+                "shared_neto_sum": data.get("shared_neto_sum", 0),
             }
         except Exception as e:
             self._log(f"Error insertando fila: {e}")
@@ -9359,22 +9528,55 @@ class App(ctk.CTk):
             campos_mayoria = {"Camion", "Semi", "DNI",
                               "Neto (kg)", "Contenedor", "Permiso"}
 
+            shared_excels = datos.get("shared_excels", [])
+            is_shared = len(shared_excels) > 1
+
             for row_i, (campo, key_ticket, key_aduana) in enumerate(campos):
                 val_ticket = datos["ticket"].get(key_ticket, "")
                 val_cont = datos["contenedor"].get(key_ticket, "")
                 val_aduana = datos["aduana"].get(key_aduana, "—") if key_aduana else "—"
+
+                # Override Neto Excel column for shared trips
+                if is_shared and campo == "Neto (kg)":
+                    excel_neto_parts = " + ".join(
+                        self._fmt_kg(ex["peso_carga"]) for ex in shared_excels
+                    )
+                    excel_neto_total = self._fmt_kg(datos["shared_neto_sum"])
+                    val_cont = f"{excel_neto_parts} = {excel_neto_total}"
+
+                # Override Neto MIC/DTA column for shared terrestre trips
+                if is_shared and modo == "terrestre" and campo == "Neto (kg)":
+                    c42 = datos["aduana"].get("campo_42", "")
+                    c44 = datos["aduana"].get("campo_44", "")
+                    c46 = datos["aduana"].get("campo_46", "")
+                    if c42 and c44 and c46:
+                        val_aduana = (f"{self._fmt_kg(c42)} + "
+                                      f"{self._fmt_kg(c44)} = "
+                                      f"{self._fmt_kg(c46)}")
                 ok = datos["ok"].get(key_ticket, False)
 
                 vals_list = [str(val_ticket), str(val_aduana), str(val_cont)]
 
                 if campo in campos_mayoria:
                     colors = []
-                    for v in vals_list:
-                        count = sum(1 for x in vals_list if x == v)
-                        if count >= 2:
-                            colors.append(("#C8FFC8", "#006400"))
-                        else:
-                            colors.append(("#FFC8C8", "#8B0000"))
+                    # For shared trips Neto: compare totals (after "="), not full strings
+                    if is_shared and campo == "Neto (kg)":
+                        totals = []
+                        for v in vals_list:
+                            if "=" in v:
+                                totals.append(v.split("=")[-1].strip())
+                            else:
+                                totals.append(v.strip())
+                        all_match = len(set(totals)) == 1
+                        for _ in vals_list:
+                            colors.append(("#C8FFC8", "#006400") if all_match else ("#FFC8C8", "#8B0000"))
+                    else:
+                        for v in vals_list:
+                            count = sum(1 for x in vals_list if x == v)
+                            if count >= 2:
+                                colors.append(("#C8FFC8", "#006400"))
+                            else:
+                                colors.append(("#FFC8C8", "#8B0000"))
                 else:
                     bg = "#C8FFC8" if ok else "#FFC8C8"
                     fg = "#006400" if ok else "#8B0000"
@@ -9431,7 +9633,266 @@ class App(ctk.CTk):
 
         _build_popup(self.config.get("font_level", 1))
 
+    def _cargar_datos_switch_toggle(self):
+        """Toggle auto mode for Control Tickets. Changes btn text hint and persists state."""
+        if self._ct_auto_var.get():
+            self.btn_controlar_tickets.configure(text="Controlar Tickets ⚡")
+        else:
+            self.btn_controlar_tickets.configure(text="Controlar Tickets")
+        self.config["cargar_datos_auto"] = self._ct_auto_var.get()
+        self._guardar_config()
+
+    def _cargar_datos_auto_scan(self):
+        """Auto-scan Desktop for folders with CONTENEDORES Excel (Control Tickets)."""
+        if self.tarea_activa:
+            messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
+            return
+        self._scan_desktop_folders(
+            pattern=None,
+            callback=self._cargar_datos_auto_popup,
+            button=self.btn_controlar_tickets,
+        )
+
+    def _cargar_datos_auto_popup(self, folders):
+        """Popup to select folders for auto-scan Control Tickets (planilla de carga style)."""
+        if not folders:
+            messagebox.showinfo(
+                "Sin resultados",
+                "No se encontraron carpetas con CONTENEDORES en el Desktop"
+            )
+            return
+
+        self._log(f"[Auto Tickets] {len(folders)} carpetas con CONTENEDORES encontradas")
+
+        top = ctk.CTkToplevel(self)
+        top.title("Control de Tickets Automático")
+        top.geometry("600x400")
+        top.configure(fg_color=Palette.BG_CARD)
+        top.transient(self)
+        top.lift()
+        top.grab_set()
+        top.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width() - 600) // 2
+        py = self.winfo_y() + (self.winfo_height() - 400) // 2
+        top.geometry(f"600x400+{px}+{py}")
+
+        ctk.CTkLabel(
+            top, text="CONTROL DE TICKETS AUTOMÁTICO",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+            text_color=Palette.TEXT_PRIMARY,
+        ).pack(pady=(16, 8))
+
+        ctk.CTkLabel(
+            top, text="Seleccioná las carpetas del Desktop a procesar:",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13),
+            text_color=Palette.TEXT_SECONDARY,
+        ).pack(anchor="w", padx=16, pady=(0, 6))
+
+        scroll = ctk.CTkScrollableFrame(
+            top, fg_color=Palette.BG_TABLE, corner_radius=8,
+            border_width=1, border_color=Palette.BORDER,
+        )
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        checks = {}
+        for carp in folders:
+            var = ctk.BooleanVar(value=True)
+            checks[carp["name"]] = var
+
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=16, pady=(0, 12))
+
+        def _update_btn(*_args):
+            any_selected = any(v.get() for v in checks.values())
+            btn_procesar.configure(state="normal" if any_selected else "disabled")
+
+        def _todas():
+            for v in checks.values():
+                v.set(True)
+
+        def _ninguna():
+            for v in checks.values():
+                v.set(False)
+
+        def _confirmar():
+            selected = [c for c in folders if checks[c["name"]].get()]
+            top.destroy()
+
+            if not selected:
+                return
+
+            # Build per-folder groups, merging COMPARTIDO folders together
+            import re as _re
+            _permiso_pat = _re.compile(r'^\d{2}069EC', _re.IGNORECASE)
+
+            # Separate shared vs normal folders
+            shared_groups = {}  # key -> [carp1, carp2, ...]
+            normal_groups = []
+
+            for carp in selected:
+                name_upper = carp["name"].upper()
+                if "COMPARTIDO" in name_upper:
+                    # Extract a grouping key: the permiso code from folder name
+                    # e.g. "19_06_2026_1_TERRESTRE_465R_560284_EWOS_F7_COMPARTIDO_CERRADO"
+                    # Use the date prefix as grouping key (same trip, same date)
+                    parts = carp["name"].split("_")
+                    # Group by date+number prefix: "19_06_2026_1"
+                    if len(parts) >= 3:
+                        key = "_".join(parts[:3])  # "19_06_2026_1"
+                    else:
+                        key = carp["name"]
+                    shared_groups.setdefault(key, []).append(carp)
+                else:
+                    normal_groups.append(carp)
+
+            folder_groups = []
+            total_pdfs = 0
+
+            # Process shared folders: merge scans + combine Excels
+            for key, shared_carp in shared_groups.items():
+                all_pdfs = []
+                all_excels = []
+                for carp in shared_carp:
+                    for f in os.scandir(carp["path"]):
+                        if f.is_file() and f.name.lower().endswith('.pdf'):
+                            if _permiso_pat.match(f.name):
+                                continue
+                            if not f.name.lower().startswith("scan"):
+                                continue
+                            all_pdfs.append(f.path)
+                    if carp["excel_path"]:
+                        all_excels.append(carp["excel_path"])
+
+                if all_pdfs and all_excels:
+                    # Pass ALL Excels for shared trips — worker sums Neto
+                    folder_groups.append((all_pdfs, all_excels))
+                    total_pdfs += len(all_pdfs)
+                    names = [c["name"] for c in shared_carp]
+                    self._log(
+                        f"[Auto Tickets] Compartido detectado: {len(names)} carpetas, "
+                        f"{len(all_excels)} Excels — Neto se sumará"
+                    )
+
+            # Process normal folders: each folder's scans paired with ITS OWN Excel
+            for carp in normal_groups:
+                pdfs = []
+                for f in os.scandir(carp["path"]):
+                    if f.is_file() and f.name.lower().endswith('.pdf'):
+                        if _permiso_pat.match(f.name):
+                            continue
+                        if not f.name.lower().startswith("scan"):
+                            continue
+                        pdfs.append(f.path)
+                if pdfs and carp["excel_path"]:
+                    folder_groups.append((pdfs, [carp["excel_path"]]))
+                    total_pdfs += len(pdfs)
+
+            if not folder_groups:
+                messagebox.showwarning(
+                    "Sin datos",
+                    "No se encontraron PDFs scan_ con Excel CONTENEDORES"
+                )
+                return
+
+            self._log(
+                f"[Auto Tickets] {len(folder_groups)} grupos, {total_pdfs} PDFs — "
+                f"(compartidos: carpetas COMPARTIDO se procesan juntas)"
+            )
+
+            if self.tarea_activa:
+                messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
+                return
+            self.tarea_activa = True
+
+            for btn_name in ('btn_controlar_tickets',):
+                btn = getattr(self, btn_name, None)
+                if btn and btn.winfo_exists():
+                    btn.configure(state="disabled")
+
+            if (hasattr(self, 'progress_carga')
+                    and self.progress_carga.winfo_exists()):
+                self.progress_carga.pack(side="right", padx=12)
+                self.progress_carga.configure(mode="indeterminate")
+                self.progress_carga.start()
+
+            # Show tickets section
+            self._section_coord.pack_forget()
+            self._section_final.pack_forget()
+            self._section_tickets.pack(fill="both", expand=True, pady=(0, 6))
+
+            # Store groups for serial processing
+            self._ct_folder_groups = folder_groups
+            self._ct_group_idx = 0
+
+            # Start first group
+            self._procesar_siguiente_grupo_ct()
+
+        # Todas / Ninguna (izquierda)
+        ctk.CTkButton(
+            btn_frame, text="Todas", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_todas,
+        ).pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(
+            btn_frame, text="Ninguna", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_ninguna,
+        ).pack(side="left", padx=4)
+
+        # Procesar (derecha)
+        btn_procesar = ctk.CTkButton(
+            btn_frame, text="Procesar", width=140, height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.WHITE, corner_radius=6,
+            command=_confirmar,
+        )
+        btn_procesar.pack(side="right", padx=4)
+
+        # Checkboxes
+        for carp in folders:
+            var = checks[carp["name"]]
+            var.trace_add("write", _update_btn)
+            ctk.CTkCheckBox(
+                scroll, text=carp["name"], variable=var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                text_color=Palette.TEXT_PRIMARY,
+            ).pack(anchor="w", padx=12, pady=4)
+
+    def _procesar_siguiente_grupo_ct(self):
+        """Process the next folder group (scan PDFs + Excel(s)) serially.
+        Shared groups pass multiple Excels — worker sums Neto."""
+        if self._ct_group_idx >= len(self._ct_folder_groups):
+            # All groups done
+            self._cargar_datos_done()
+            return
+
+        pdfs, excels = self._ct_folder_groups[self._ct_group_idx]
+        self._ct_group_idx += 1
+        remaining = len(self._ct_folder_groups) - self._ct_group_idx
+        excel_note = f"{len(excels)} Excels" if len(excels) > 1 else "1 Excel"
+        self._log(
+            f"[Auto Tickets] Grupo {self._ct_group_idx}/{len(self._ct_folder_groups)}: "
+            f"{len(pdfs)} PDFs, {excel_note} — {remaining} grupos restantes"
+        )
+
+        t = threading.Thread(
+            target=self._cargar_datos_worker,
+            args=("local", list(pdfs), list(excels)),
+            daemon=True,
+        )
+        t.start()
+
     def _cargar_datos_seleccionar_pdfs(self):
+        if self._ct_auto_var.get():
+            self._cargar_datos_auto_scan()
+            return
         from tkinter import filedialog as tk_filedialog
         rutas = tk_filedialog.askopenfilenames(
             title="Seleccionar PDFs y Excel CONTENEDORES",
@@ -9588,6 +10049,9 @@ class App(ctk.CTk):
         Usa self._contenedores_cache (cargado por _cargar_cache_contenedores).
         NO abre workbooks — lee PE desde caché.
 
+        Soporta viajes compartidos: si el permiso tiene '/' (ej: '26069EC01000372Y/1000579A'),
+        prueba cada parte por separado y combina resultados.
+
         Retorna lista de rutas de archivos que coinciden (ordenadas por
         estrategia 1 primero, luego estrategia 2), o lista vacía."""
         import re as _re
@@ -9595,6 +10059,27 @@ class App(ctk.CTk):
         if not permiso_ticket:
             self.log_queue.put((self._log_warning, "[MATCH] permiso_ticket vacío, abortando"))
             return []
+
+        # ── Viajes compartidos: probar cada permiso por separado ──────
+        partes = [p.strip() for p in str(permiso_ticket).split('/') if p.strip()]
+        if len(partes) > 1:
+            self.log_queue.put((self._log_warning,
+                f"[MATCH] Viaje compartido: {len(partes)} permisos -> {[p for p in partes]}"))
+            todas = []
+            for parte in partes:
+                sub = self._match_contenedor(parte)
+                todas.extend(sub)
+            # Deduplicar manteniendo orden
+            seen = set()
+            unicas = []
+            for r in todas:
+                if r not in seen:
+                    seen.add(r)
+                    unicas.append(r)
+            if unicas:
+                self.log_queue.put((self._log_warning,
+                    f"[MATCH] ✅ Total candidatos (compartido): {len(unicas)}"))
+            return unicas
 
         # ── Preparar patrones desde el permiso del ticket ────────────
         ticket_alfanum = _re.sub(r'[^a-zA-Z0-9]', '', str(permiso_ticket))
@@ -10346,39 +10831,75 @@ class App(ctk.CTk):
                 "permiso": permiso,
             }
 
-            # Match CONTENEDOR
-            rutas_match = self._match_contenedor(permiso)
+            # Match CONTENEDOR — primero por patente/semi/DNI (rápido),
+            # luego fallback por permiso (PE suffix)
             ruta_match = None
             cont_data = None
             pe_val = None
+            pn = _normalizar_simple(patente)
+            sn = _normalizar_simple(semi)
+            dn = _re.sub(r'\D', '', str(dni).strip())
 
-            for ruta_cand in rutas_match:
-                cd = self._leer_datos_contenedor(ruta_cand)
-                cv = self._leer_pe_choferes(ruta_cand)
-                if cd and cd.get("camiones"):
-                    pn = _normalizar_simple(patente)
-                    sn = _normalizar_simple(semi)
-                    dn = _re.sub(r'\D', '', str(dni).strip())
-                    for camion in cd["camiones"]:
+            # ── Fast path: buscar por patente/semi/DNI en cache ──
+            # For shared trips (compartido), find ALL matching Excels
+            all_matches = []  # [(ruta, data, camion)] — all Excels matching this truck
+            shared_excels = []  # [{ruta, nombre, data}] — for shared trips
+            shared_neto_sum = 0
+            if self._contenedores_cache:
+                for ruta, data in self._contenedores_cache.items():
+                    if not data or not data.get("camiones"):
+                        continue
+                    for camion in data["camiones"]:
                         cp = _normalizar_simple(camion.get("patente_camion", ""))
                         cs = _normalizar_simple(camion.get("patente_semi", ""))
                         cdn = _re.sub(r'\D', '', str(camion.get("dni", "")).strip())
                         if (pn and cp and pn == cp) or \
                            (sn and cs and sn == cs) or \
                            (dn and cdn and dn == cdn):
-                            ruta_match = ruta_cand
-                            cont_data = cd
-                            pe_val = cv
+                            all_matches.append((ruta, data, camion))
                             break
-                if ruta_match:
-                    break
 
-            if not ruta_match and rutas_match:
-                ruta_match = rutas_match[0]
-                cont_data = self._leer_datos_contenedor(ruta_match)
+            if all_matches:
+                ruta_match = all_matches[0][0]
+                cont_data = all_matches[0][1]
                 pe_val = self._leer_pe_choferes(ruta_match)
 
-            return ticket_data, cont_data, ruta_match, pe_val, permiso
+                if len(all_matches) > 1:
+                    # Shared trip: build shared_excels list with individual Neto
+                    for ruta, data, camion in all_matches:
+                        carpeta = os.path.basename(os.path.dirname(ruta))
+                        ex_pe = self._leer_pe_choferes(ruta)
+                        shared_excels.append({
+                            "ruta": ruta,
+                            "nombre": carpeta,
+                            "data": data,
+                            "camion": camion,
+                            "pe": ex_pe,
+                        })
+                        shared_neto_sum += camion.get("peso_carga", 0)
+                    # Keep cont_data as first Excel (backward compat)
+                    self.log_queue.put(
+                        f"[MATCH] ✅ Fast compartido: patente '{patente}' "
+                        f"-> {len(all_matches)} Excels, Neto total: {shared_neto_sum} kg")
+                else:
+                    self.log_queue.put(
+                        f"[MATCH] ✅ Fast: patente '{patente}' -> {os.path.basename(ruta_match)}")
+
+            # ── Fallback: buscar por permiso (PE suffix) ──
+            if not ruta_match:
+                rutas_match = self._match_contenedor(permiso)
+                for ruta_cand in rutas_match:
+                    cd = self._leer_datos_contenedor(ruta_cand)
+                    cv = self._leer_pe_choferes(ruta_cand)
+                    if cd and cd.get("camiones"):
+                        ruta_match = ruta_cand
+                        cont_data = cd
+                        pe_val = cv
+                        self.log_queue.put(
+                            f"[MATCH] ✅ Fallback permiso: '{permiso}' -> {os.path.basename(ruta_cand)}")
+                        break
+
+            return ticket_data, cont_data, ruta_match, pe_val, permiso, shared_excels, shared_neto_sum
 
         # ── 3. Procesar resultados y enviarlos a la UI ──
         for hechos, ruta in enumerate(rutas, start=1):
@@ -10387,13 +10908,17 @@ class App(ctk.CTk):
 
             if has_data:
                 texto = textos_por_pdf.get(stem, "")
-                ticket_data, cont_data, ruta_match, pe_val, permiso = \
-                    _procesar_texto(stem, texto)
+                ticket_data, cont_data, ruta_match, pe_val, permiso, \
+                    shared_excels, shared_neto_sum = _procesar_texto(stem, texto)
                 nombre = stem
 
                 self.log_queue.put(
                     f"[{timestamp}] [{hechos}/{total}] ✓ {nombre} — permiso {permiso}")
-                if ruta_match:
+                if shared_excels:
+                    self.log_queue.put(
+                        f"     ✓ COMPARTIDO: {len(shared_excels)} Excels, "
+                        f"Neto total: {shared_neto_sum} kg")
+                elif ruta_match:
                     self.log_queue.put(
                         f"     ✓ CONTENEDOR: {os.path.basename(ruta_match)}")
                 else:
@@ -10404,6 +10929,8 @@ class App(ctk.CTk):
                     "contenedor": cont_data,
                     "match": ruta_match,
                     "pe": pe_val,
+                    "shared_excels": shared_excels,
+                    "shared_neto_sum": shared_neto_sum,
                 }))
             else:
                 nombre = os.path.basename(ruta)
@@ -10415,7 +10942,17 @@ class App(ctk.CTk):
         self._contenedores_cache = {}  # liberar memoria
 
     def _cargar_datos_done(self):
-        """Callback al recibir _OCR_DONE_. Desbloquea UI y habilita escritura."""
+        """Callback al recibir _OCR_DONE_. Desbloquea UI y habilita escritura.
+        Si hay grupos pendientes (auto mode), procesa el siguiente."""
+        # Chain: process next folder group if pending
+        if (hasattr(self, '_ct_folder_groups')
+                and self._ct_group_idx < len(self._ct_folder_groups)):
+            self._procesar_siguiente_grupo_ct()
+            return
+
+        # No more groups — final cleanup
+        self._ct_folder_groups = []
+        self._ct_group_idx = 0
         self.tarea_activa = False
         try:
             for btn_name in ('btn_controlar_tickets',):

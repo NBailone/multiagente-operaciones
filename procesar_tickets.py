@@ -1594,11 +1594,13 @@ def extraer_salida_aduana(pdf_path: str, modo: str = "flexi") -> dict:
 def extraer_mic_dta(pdf_path: str) -> dict:
     """
     Extrae datos de un PDF de MIC/DTA (Manifiesto Internacional de Carga).
-    Extrae por campos numerados (1-41) del formulario MIC/DTA.
+    Extrae por campos numerados (1-46) del formulario MIC/DTA.
 
     Retorna dict con las mismas claves que espera _build_fila_control_final:
         plt, patente_camion, patente_semi, peso_bruto, precinto,
-        id_destinacion, exportador, conductor, cuil, contenedor
+        id_destinacion, exportador, conductor, cuil, contenedor,
+        campo_42 (peso individual 1), campo_44 (peso individual 2),
+        campo_46 (total pesos) — viajes compartidos
     """
     import fitz
     doc = fitz.open(pdf_path)
@@ -1635,6 +1637,18 @@ def extraer_mic_dta(pdf_path: str) -> dict:
 
     if current_num is not None:
         blocks[current_num] = "\n".join(current_lines)
+
+    # Hoja 2: campos 42-47 (viajes compartidos) — procesar del texto completo
+    # Formato: "42 Cantidad de Bultos\n21740\nQuantidade de volumes"
+    full_lines = text.split("\n")
+    for idx, line in enumerate(full_lines):
+        m = field_pat.match(line.strip())
+        if m:
+            num = int(m.group(1))
+            if 42 <= num <= 47:
+                # Value is on the next line
+                if idx + 1 < len(full_lines):
+                    blocks[num] = line.strip() + "\n" + full_lines[idx + 1].strip()
 
     def _f(n):
         return blocks.get(n, "")
@@ -1699,6 +1713,43 @@ def extraer_mic_dta(pdf_path: str) -> dict:
 
     # Contenedor: no aplica en MIC terrestre
     data["contenedor"] = ""
+
+    # Campo 42 — Peso individual 1 (hoja 2, viajes compartidos)
+    txt = _f(42)
+    if txt:
+        # Skip the field number at start, then find the value
+        clean = re.sub(r"^\d{1,2}\s*", "", txt.strip())
+        m = re.search(r"(\d[\d.,]*)", clean)
+        if m:
+            data["campo_42"] = m.group(1).replace(",", "")
+        else:
+            data["campo_42"] = ""
+    else:
+        data["campo_42"] = ""
+
+    # Campo 44 — Peso individual 2 (hoja 2, viajes compartidos)
+    txt = _f(44)
+    if txt:
+        clean = re.sub(r"^\d{1,2}\s*", "", txt.strip())
+        m = re.search(r"(\d[\d.,]*)", clean)
+        if m:
+            data["campo_44"] = m.group(1).replace(",", "")
+        else:
+            data["campo_44"] = ""
+    else:
+        data["campo_44"] = ""
+
+    # Campo 46 — Total pesos (hoja 2, viajes compartidos)
+    txt = _f(46)
+    if txt:
+        clean = re.sub(r"^\d{1,2}\s*", "", txt.strip())
+        m = re.search(r"(\d[\d.,]*)", clean)
+        if m:
+            data["campo_46"] = m.group(1).replace(",", "")
+        else:
+            data["campo_46"] = ""
+    else:
+        data["campo_46"] = ""
 
     return data
 
