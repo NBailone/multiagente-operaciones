@@ -1693,6 +1693,15 @@ def extraer_mic_dta(pdf_path: str) -> dict:
     m = re.search(r"Destinacion[:\s]*(\S+)", txt)
     data["id_destinacion"] = m.group(1) if m else ""
 
+    # Hoja 1 y Hoja 2: ambos PE destino (viajes compartidos)
+    all_destinos = re.findall(r"Destinacion[:\s]*(\S+)", mic_text)
+    if len(all_destinos) >= 2:
+        data["id_destinacion_1"] = all_destinos[0]  # hoja 1 (fracción que cierra)
+        data["id_destinacion_2"] = all_destinos[1]  # hoja 2 (fracción nueva)
+    else:
+        data["id_destinacion_1"] = ""
+        data["id_destinacion_2"] = ""
+
     # Campo 33 — Exportador / Remitente
     txt = _f(33)
     m = re.search(r"(?:Remitente|Remetente)\s*\n\s*/\s*\w+[^\n]*\n\s*([^\n]+)", txt)

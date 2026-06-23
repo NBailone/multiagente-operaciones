@@ -6434,7 +6434,12 @@ class App(ctk.CTk):
                 adjuntar_archivo(msg_grupal, ruta_maestra)
                 n_adj_grupal += 1
             else:
-                self._log("Advertencia: No se detectó 'CARGA TERRESTRE' en el pendrive.")
+                self._log("ERROR: No se detectó 'CARGA TERRESTRE' en el pendrive.")
+                self.after(0, lambda: messagebox.showerror(
+                    "Planilla no encontrada",
+                    "No se encontró la planilla 'CARGA TERRESTRE' en el pendrive.\n\n"
+                    "Verificá que el pendrive esté conectado y que el archivo exista."
+                ))
 
             correos_a_subir.append(("Grupal", "CARGA TERRESTRE", msg_grupal, n_adj_grupal))
             self.after(
@@ -9155,6 +9160,8 @@ class App(ctk.CTk):
         a_patente_semi   = aduana.get("patente_semi", "")
         a_conductor      = aduana.get("conductor", "")
         a_id_destinacion = aduana.get("id_destinacion", "")
+        a_id_destinacion_1 = aduana.get("id_destinacion_1", "")
+        a_id_destinacion_2 = aduana.get("id_destinacion_2", "")
         a_exportador     = aduana.get("exportador", "")
         a_contenedor     = aduana.get("contenedor", "")
         a_precinto       = aduana.get("precinto", "")
@@ -9261,6 +9268,35 @@ class App(ctk.CTk):
         e_tara       = _fmt_neto(e_tara)
         # No format a_peso_bruto display — a_neto_calc is used for comparison
 
+        # ── Shared trips: override Excel Neto with TOTAL (all fractions) ──
+        if is_shared and shared_neto_sum:
+            e_neto = _fmt_neto(str(int(shared_neto_sum)))
+
+        # ── Format ticket PE: si tiene "/", mantener primera parte + últimos 5 de la segunda ──
+        if "/" in t_permiso:
+            parts = t_permiso.split("/")
+            if len(parts) >= 2 and len(parts[-1].strip()) >= 5:
+                t_permiso = f"{parts[0].strip()}/{parts[-1].strip()[-5:]}"
+
+        # ── For shared trips: combine PEs (Ticket + Excel + MIC) ──
+        if is_shared:
+            # Ticket: primary PE / last 5 of secondary PE (to match Excel format)
+            # Only if ticket PE doesn't already have "/" (already formatted above)
+            if t_permiso and "/" not in t_permiso and shared_excel_matches:
+                s_data, s_idx = shared_excel_matches[0]
+                s_pe = s_data.get("pe", "")
+                if s_pe and len(s_pe) >= 5:
+                    t_permiso = f"{t_permiso}/{s_pe[-5:]}"
+            # Excel: primary PE / last 5 of secondary PE
+            if e_permiso and shared_excel_matches:
+                s_data, s_idx = shared_excel_matches[0]
+                s_pe = s_data.get("pe", "")
+                if s_pe and len(s_pe) >= 5:
+                    e_permiso = f"{e_permiso}/{s_pe[-5:]}"
+            # MIC: hoja 1 PE / last 5 of hoja 2 PE
+            if modo == "terrestre" and a_id_destinacion_1 and a_id_destinacion_2:
+                a_id_destinacion = f"{a_id_destinacion_1}/{a_id_destinacion_2[-5:]}"
+
         # ── Build display dicts (all normalized) ──
         ticket_d = {
             "Patente": t_patente, "Semirremolque": t_semi,
@@ -9316,7 +9352,12 @@ class App(ctk.CTk):
             elif campo == "Semirremolque": aduana_val = a_patente_semi.strip().upper()
             elif campo == "Conductor":    aduana_val = a_conductor.strip().upper()
             elif campo == "DNI":          aduana_val = a_dni.strip().upper()
-            elif campo == "Neto (kg)":    aduana_val = a_neto_calc.strip().upper()
+            elif campo == "Neto (kg)":
+                # Shared terrestre: use campo_46 (total) instead of a_peso_bruto (hoja 1 only)
+                if is_shared and modo == "terrestre" and a_campo_46:
+                    aduana_val = _fmt_neto(a_campo_46).strip().upper()
+                else:
+                    aduana_val = a_neto_calc.strip().upper()
             elif campo == "Contenedor":   aduana_val = a_contenedor.strip().upper()
             elif campo == "Permiso":      aduana_val = a_id_destinacion.strip().upper()
             elif campo == "Precinto":     aduana_val = a_precinto.strip().upper()
@@ -9372,6 +9413,14 @@ class App(ctk.CTk):
                     cont_codes = set(v_cont.split()) if v_cont else set()
                     adu_codes = set(aduana_val.split()) if aduana_val else set()
                     if cont_codes & adu_codes:
+                        ok_map[campo] = True
+                    else:
+                        ok_map[campo] = False
+                        all_ok = False
+                # Para Permiso en compartidos: al menos 2 de 3 fuentes coinciden
+                elif campo == "Permiso" and is_shared:
+                    sources = [v for v in [v_ticket, v_cont, aduana_val] if v]
+                    if sources and max(sources.count(v) for v in sources) >= 2:
                         ok_map[campo] = True
                     else:
                         ok_map[campo] = False
