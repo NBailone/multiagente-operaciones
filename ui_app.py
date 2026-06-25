@@ -749,6 +749,10 @@ class App(ctk.CTk):
         if frame:
             frame.pack(in_=self.panel_container, fill="both", expand=True)
 
+        # Reescanear carpetas al volver al panel de impresión
+        if nombre == "impresion":
+            self.after(50, self._imp_escanear_carpetas)
+
         # Actualizar título y navegación
         idx_map = {"descargar": 0, "impresion": 1, "planillas": 2, "cargar-datos": 3, "correos": 4, "backup": 5, "ajustes": 6}
         idx = idx_map.get(nombre, 1)
@@ -987,10 +991,6 @@ class App(ctk.CTk):
         )
         self._imp_btn_imprimir.pack(fill="x", padx=12, pady=(10, 8))
 
-        # Escanear carpetas después de que la interfaz sea visible
-        self._imp_lbl_estado.configure(text="🔍 Buscando carpetas...")
-        self.after(100, self._imp_escanear_carpetas)
-
     def _scan_desktop_folders(self, pattern=None, callback=None, button=None):
         """Scan Desktop for folders containing CONTENEDORES Excel files.
         
@@ -1058,6 +1058,7 @@ class App(ctk.CTk):
         for w in self._imp_scroll_carpetas.winfo_children():
             w.destroy()
         self._imp_carpetas_vars.clear()
+        self._imp_select_all_var.set(True)
 
         # Mostrar indicador de búsqueda en la toolbar
         self._imp_lbl_estado.configure(text="🔍 Buscando carpetas...")
