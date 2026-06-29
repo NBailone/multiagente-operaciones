@@ -1873,74 +1873,69 @@ class App(ctk.CTk):
         # ── Toolbar ──────────────────────────────────────────────────
         toolbar = ctk.CTkFrame(
             frame, fg_color=Palette.BG_CARD, corner_radius=8,
-            border_width=1, border_color=Palette.BORDER, height=44
+            border_width=1, border_color=Palette.BORDER,
         )
         toolbar.pack(fill="x", pady=(0, 6))
-        toolbar.pack_propagate(False)
+
+        # Botones principales a la izquierda
+        btns_left = ctk.CTkFrame(toolbar, fg_color="transparent")
+        btns_left.pack(side="left", fill="x", expand=True, padx=4, pady=4)
+
+        _btn_width = 140
 
         self.btn_ejecutar_planillas = ctk.CTkButton(
-            toolbar,
+            btns_left,
             text="▶  Completar Planillas",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.ACCENT,
             hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE,
-            corner_radius=6,
-            height=34,
-            width=200,
+            corner_radius=6, height=34, width=_btn_width,
             command=self._popup_completar_planillas,
         )
-        self.btn_ejecutar_planillas.pack(side="left", padx=4, pady=4)
 
         self.btn_agregar_guarda = ctk.CTkButton(
-            toolbar,
+            btns_left,
             text="🛡  Agregar Guarda",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY,
             hover_color=Palette.SECONDARY_HOVER,
             text_color=Palette.WHITE,
-            corner_radius=6,
-            height=34,
-            width=160,
+            corner_radius=6, height=34, width=_btn_width,
             command=self._popup_agregar_guarda,
         )
-        self.btn_agregar_guarda.pack(side="left", padx=4, pady=4)
 
         self.btn_editar_excels = ctk.CTkButton(
-            toolbar, text="📝 Editar Excels",
+            btns_left, text="📝 Editar Excels",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
-            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34, width=_btn_width,
             command=self._popup_editar_excels,
         )
-        self.btn_editar_excels.pack(side="left", padx=4, pady=4)
 
         self.btn_planilla_carga = ctk.CTkButton(
-            toolbar, text="📋 Planilla de Carga",
+            btns_left, text="📋 Planilla de Carga",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
-            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34, width=_btn_width,
             command=self._popup_planilla_carga,
         )
-        self.btn_planilla_carga.pack(side="left", padx=4, pady=4)
 
-        self.lbl_estado_planillas = ctk.CTkLabel(
-            toolbar,
-            text="Listo para analizar el Escritorio",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
-            text_color=Palette.TEXT_PRIMARY,
-        )
-        self.lbl_estado_planillas.pack(side="left", padx=(8, 0))
+        # Progress + Limpiar a la derecha
+        right_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
+        right_frame.pack(side="right", padx=(0, 8), pady=4)
+        right_frame.pack_propagate(False)
+        right_frame.configure(width=220, height=34)
 
         self.progress_planillas = ctk.CTkProgressBar(
-            toolbar, width=160, height=8, corner_radius=4,
+            right_frame, width=120, height=8, corner_radius=4,
             fg_color=Palette.BG_INPUT, progress_color=Palette.ACCENT,
         )
-        self.progress_planillas.pack(side="right", padx=16)
+        self.progress_planillas.pack(side="left", padx=(0, 8), pady=13)
         self.progress_planillas.set(0)
 
         self.btn_limpiar_planillas = ctk.CTkButton(
-            toolbar,
+            right_frame,
             text="Limpiar",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color="transparent",
@@ -1949,7 +1944,28 @@ class App(ctk.CTk):
             corner_radius=4, height=30, width=70,
             command=self._limpiar_planillas,
         )
-        self.btn_limpiar_planillas.pack(side="right", padx=4)
+        self.btn_limpiar_planillas.pack(side="left", pady=2)
+
+        _toolbar_btns = [
+            self.btn_ejecutar_planillas,
+            self.btn_agregar_guarda,
+            self.btn_editar_excels,
+            self.btn_planilla_carga,
+        ]
+        for b in _toolbar_btns:
+            b.grid(row=0, column=0)
+
+        def _reflow_toolbar_btns(event=None):
+            fw = btns_left.winfo_width()
+            if fw < 50:
+                return
+            pitch = _btn_width + 16  # 140 + 16 = 156
+            cols = max(1, fw // pitch)
+            for i, b in enumerate(_toolbar_btns):
+                b.grid(row=i // cols, column=i % cols, padx=4, pady=3, sticky="w")
+
+        btns_left.bind("<Configure>", _reflow_toolbar_btns)
+        btns_left.after_idle(_reflow_toolbar_btns)
 
         # ── Tabla de resultados ─────────────────────────────────────
         self._crear_tabla_planillas(frame)
@@ -4478,6 +4494,9 @@ class App(ctk.CTk):
         self._cancelar_tarea.clear()
         self.btn_planilla_carga.configure(text="⏳  Procesando...", state="disabled")
         self.btn_ejecutar_planillas.configure(state="disabled")
+        self.progress_planillas.set(0)
+        self.progress_planillas.configure(mode="indeterminate")
+        self.progress_planillas.start()
         self._limpiar_log()
         self._log("📋 Generando Planillas de Carga")
 
@@ -4532,6 +4551,7 @@ class App(ctk.CTk):
                 text="📋 Planilla de Carga", state="normal",
             )
             self.btn_ejecutar_planillas.configure(state="normal")
+            self.progress_planillas.stop()
         except (AttributeError, Exception):
             pass
 
@@ -4548,6 +4568,9 @@ class App(ctk.CTk):
         self._cancelar_tarea.clear()
         self.btn_agregar_guarda.configure(text="⏳  Procesando...", state="disabled")
         self.btn_ejecutar_planillas.configure(state="disabled")
+        self.progress_planillas.set(0)
+        self.progress_planillas.configure(mode="indeterminate")
+        self.progress_planillas.start()
         self._limpiar_log()
         self._log(f"🛡 Agregando Guarda: {guarda_elegido}")
 
@@ -4599,6 +4622,7 @@ class App(ctk.CTk):
                 text="🛡  Agregar Guarda", state="normal",
                 fg_color=Palette.SECONDARY)
             self.btn_ejecutar_planillas.configure(state="normal")
+            self.progress_planillas.stop()
         except (AttributeError, Exception):
             pass
 
@@ -4725,11 +4749,9 @@ class App(ctk.CTk):
             text="⏳  Analizando...", state="disabled",
             fg_color=Palette.ACCENT_DIM
         )
+        self.progress_planillas.set(0)
         self.progress_planillas.configure(mode="indeterminate")
         self.progress_planillas.start()
-        self.lbl_estado_planillas.configure(
-            text="Escaneando Escritorio...", text_color=Palette.INFO
-        )
         self._set_status("Analizando planillas del Escritorio...")
 
         # Limpiar pantalla antes de empezar
@@ -5962,10 +5984,6 @@ class App(ctk.CTk):
                 fg_color=Palette.ACCENT,
             )
             self.progress_planillas.stop()
-            self.progress_planillas.set(1)
-            self.lbl_estado_planillas.configure(
-                text="Análisis completado", text_color=Palette.SUCCESS
-            )
         except (AttributeError, Exception):
             pass
         self._set_status("Análisis de planillas finalizado")
@@ -6416,8 +6434,27 @@ class App(ctk.CTk):
             if not ruta_maestra and nombre_ct.lower().endswith(".xlsx"):
                 ruta_maestra = buscar_archivo_en_pendrive(nombre_ct[:-5] + ".xls", carpeta_ct)
 
-            # Ordenar planillas por nombre
-            planillas_ordenadas = sorted(terr_planillas, key=lambda p: os.path.basename(p).upper())
+            # Ordenar planillas: agrupar por destino, compartidos juntos (CERRADO primero)
+            def _sort_key_terrestre(p):
+                nombre = os.path.basename(p).upper()
+                # Extraer destino (VITAPRO, EWOS, etc.)
+                dest = ""
+                for d in ("VITAPRO","EWOS","NUTRECO","DICOAL","CARGILL","BIOMAR"):
+                    if f"_{d}_" in nombre:
+                        dest = d; break
+                if not dest:
+                    m = re.search(r"(?:TERRESTRE|ISO|FLEXI)_[^_]+_[^_]+_([A-Z]+)", nombre)
+                    dest = m.group(1) if m else "ZZZ"
+                # Detectar si es compartido y si cierra
+                es_compartido = "COMPARTIDO" in nombre
+                cierra_primero = 0 if es_compartido and "CERRADO" in nombre else 1
+                # Extraer fracción (F1, F2, F3, F4)
+                m_frac = re.search(r"_(F\d+)_", nombre)
+                fraccion = m_frac.group(1) if m_frac else ""
+                # Destino → compartido → cierra → fracción
+                return (dest, 0 if es_compartido else 1, cierra_primero, fraccion, nombre)
+
+            planillas_ordenadas = sorted(terr_planillas, key=_sort_key_terrestre)
 
             cuerpo = "Estimados,\n\nSe adjuntan las planillas de carga correspondientes:\n\n"
             for p in planillas_ordenadas:
@@ -6428,8 +6465,8 @@ class App(ctk.CTk):
             cuerpo += "\nSaludos cordiales."
             msg_grupal.attach(MIMEText(cuerpo, "plain"))
 
-            n_adj_grupal = len(terr_planillas)
-            for p in terr_planillas:
+            n_adj_grupal = len(planillas_ordenadas)
+            for p in planillas_ordenadas:
                 adjuntar_archivo(msg_grupal, p)
             if ruta_maestra:
                 adjuntar_archivo(msg_grupal, ruta_maestra)
@@ -6460,7 +6497,23 @@ class App(ctk.CTk):
             msg_grupal["From"] = self._cfg_obtener_correo("usuario", "")
             msg_grupal["To"] = ", ".join(self._cfg_obtener_correo("destinatarios_grupal", DESTINATARIOS_GRUPAL))
 
-            mar_ordenadas = sorted(mar_planillas, key=lambda p: os.path.basename(p).upper())
+            # Ordenar planillas marítimas: agrupar por destino, compartidos juntos (CERRADO primero)
+            def _sort_key_maritimo(p):
+                nombre = os.path.basename(p).upper()
+                dest = ""
+                for d in ("VITAPRO","EWOS","NUTRECO","DICOAL","CARGILL","BIOMAR"):
+                    if f"_{d}_" in nombre:
+                        dest = d; break
+                if not dest:
+                    m = re.search(r"(?:TERRESTRE|ISO|FLEXI)_[^_]+_[^_]+_([A-Z]+)", nombre)
+                    dest = m.group(1) if m else "ZZZ"
+                es_compartido = "COMPARTIDO" in nombre
+                cierra_primero = 0 if es_compartido and "CERRADO" in nombre else 1
+                m_frac = re.search(r"_(F\d+)_", nombre)
+                fraccion = m_frac.group(1) if m_frac else ""
+                return (dest, 0 if es_compartido else 1, cierra_primero, fraccion, nombre)
+
+            mar_ordenadas = sorted(mar_planillas, key=_sort_key_maritimo)
 
             if len(mar_planillas) == 1:
                 cuerpo = "Estimados,\n\nSe adjunta la planilla de carga correspondiente:\n\n"
@@ -6472,7 +6525,7 @@ class App(ctk.CTk):
             cuerpo += "\nSaludos cordiales."
             msg_grupal.attach(MIMEText(cuerpo, "plain"))
 
-            for p in mar_planillas:
+            for p in mar_ordenadas:
                 adjuntar_archivo(msg_grupal, p)
 
             correos_a_subir.append(("Grupal", asunto_grupal, msg_grupal, len(mar_planillas)))
@@ -7991,7 +8044,6 @@ class App(ctk.CTk):
         for row in self.tree_planillas.get_children():
             self.tree_planillas.delete(row)
         self.lbl_resumen_planillas.configure(text="Sin datos analizados")
-        self.lbl_estado_planillas.configure(text="Listo para analizar el Escritorio")
         self.progress_planillas.set(0)
 
     # ── Limpiar vista — descargar ──────────────────────────────────────
