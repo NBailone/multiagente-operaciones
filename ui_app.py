@@ -4195,7 +4195,7 @@ class App(ctk.CTk):
                 if xls_cualquiera is None:
                     xls_cualquiera = ruta
 
-        source_path = xlsx_preferido or xlsx_cualquiera or xls_preferido or xls_cualquiera
+        source_path = xlsx_preferido or xls_preferido or xlsx_cualquiera or xls_cualquiera
         if not source_path:
             return False, "No se encontró archivo .xlsx/.xls en la carpeta"
 
