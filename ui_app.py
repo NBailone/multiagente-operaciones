@@ -429,27 +429,47 @@ class App(ctk.CTk):
         )
         nav_label.pack(anchor="w", padx=14, pady=(6, 4))
 
+        # ── Iconos Lucide (compartidos por todos los paneles) ─────────
+        _icon_dir = os.path.join(os.path.dirname(__file__), "assets", "icons")
+        _icon_size = (20, 20)
+        self._icons = {}
+        for _name in ["inbox", "file-text", "table", "clipboard-list", "send", "save",
+                       "settings", "mail-search", "search", "mail", "cloud-download",
+                       "refresh-cw", "bookmark", "printer", "play", "shield", "pencil",
+                       "check", "x", "ticket", "zap", "folder-open", "hard-drive",
+                       "folder", "banknote", "lock", "bot", "palette", "eye"]:
+            self._icons[_name] = ctk.CTkImage(
+                Image.open(os.path.join(_icon_dir, f"{_name}.png")), size=_icon_size
+            )
+
         self.btn_descargar = self._crear_btn_nav(
-            "Descargar Mails", "📥", 0, lambda: self._cambiar_panel("descargar")
+            "Descargar Mails", "inbox", 0, lambda: self._cambiar_panel("descargar"),
+            image=self._icons["inbox"],
         )
         self.btn_impresion = self._crear_btn_nav(
-            "Impresión Documental", "📄", 1, lambda: self._cambiar_panel("impresion")
+            "Impresión Documental", "file-text", 1, lambda: self._cambiar_panel("impresion"),
+            image=self._icons["file-text"],
         )
         self.btn_planillas = self._crear_btn_nav(
-            "Completar Planillas", "📊", 2, lambda: self._cambiar_panel("planillas")
+            "Completar Planillas", "table", 2, lambda: self._cambiar_panel("planillas"),
+            image=self._icons["table"],
         )
         self.btn_cargar_datos = self._crear_btn_nav(
-            "Controlar Datos", "📋", 3, lambda: self._cambiar_panel("cargar-datos")
+            "Controlar Datos", "clipboard-list", 3, lambda: self._cambiar_panel("cargar-datos"),
+            image=self._icons["clipboard-list"],
         )
         self.btn_correos = self._crear_btn_nav(
-            "Enviar Correos", "📤", 4, lambda: self._cambiar_panel("correos")
+            "Enviar Correos", "send", 4, lambda: self._cambiar_panel("correos"),
+            image=self._icons["send"],
         )
         self.btn_backup = self._crear_btn_nav(
-            "Backup", "💾", 5, lambda: self._cambiar_panel("backup")
+            "Backup", "save", 5, lambda: self._cambiar_panel("backup"),
+            image=self._icons["save"],
         )
 
         self.btn_ajustes = self._crear_btn_nav(
-            "Ajustes", "⚙", 6, lambda: self._cambiar_panel("ajustes")
+            "Ajustes", "settings", 6, lambda: self._cambiar_panel("ajustes"),
+            image=self._icons["settings"],
         )
 
         # ── Separador ────────────────────────────────────────────────
@@ -498,10 +518,11 @@ class App(ctk.CTk):
         )
         self.btn_salir.pack(side="bottom", fill="x", padx=10, pady=10)
 
-    def _crear_btn_nav(self, texto, icono, idx, comando):
+    def _crear_btn_nav(self, texto, icono, idx, comando, image=None):
         btn = ctk.CTkButton(
             self._nav_scroll,
-            text=f"  {icono}  {texto}",
+            text=f"  {texto}",
+            image=image, compound="left" if image else "none",
             font=ctk.CTkFont(family=FONT_FAMILY, size=14),
             fg_color="transparent",
             hover_color=Palette.BG_HOVER,
@@ -849,7 +870,8 @@ class App(ctk.CTk):
 
         self._imp_btn_refresh = ctk.CTkButton(
             toolbar,
-            text="🔄  Refrescar",
+            text="Refrescar",
+            image=self._icons["refresh-cw"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
@@ -859,7 +881,8 @@ class App(ctk.CTk):
 
         self._imp_btn_dorsos = ctk.CTkButton(
             toolbar,
-            text="📄 Dorsos",
+            text="Dorsos",
+            image=self._icons["file-text"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
@@ -868,7 +891,8 @@ class App(ctk.CTk):
         self._imp_btn_dorsos.pack(side="left", padx=4, pady=4)
 
         self._imp_btn_sellos_mic = ctk.CTkButton(
-            toolbar, text="🔖 Sellos MIC",
+            toolbar, text="Sellos MIC",
+            image=self._icons["bookmark"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
@@ -877,7 +901,8 @@ class App(ctk.CTk):
         self._imp_btn_sellos_mic.pack(side="left", padx=4, pady=4)
 
         self._imp_btn_sellos_crt = ctk.CTkButton(
-            toolbar, text="🔖 Sellos CRT",
+            toolbar, text="Sellos CRT",
+            image=self._icons["bookmark"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
@@ -983,7 +1008,8 @@ class App(ctk.CTk):
         # Botón IMPRIMIR (arranca activo porque hay carpetas y opciones por defecto)
         self._imp_btn_imprimir = ctk.CTkButton(
             right_frame,
-            text="🖨  IMPRIMIR",
+            text="IMPRIMIR",
+            image=self._icons["printer"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=36,
@@ -1381,7 +1407,7 @@ class App(ctk.CTk):
             threading.Thread(target=_worker, daemon=True).start()
 
         btn_imprimir = ctk.CTkButton(
-            popup, text="🖨  IMPRIMIR DORSOS",
+            popup, text="IMPRIMIR DORSOS", image=self._icons["printer"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=40,
@@ -1463,7 +1489,8 @@ class App(ctk.CTk):
 
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=(8, 0))
-        ctk.CTkButton(btn_frame, text="🖨  Imprimir", width=120, height=34,
+        ctk.CTkButton(btn_frame, text="Imprimir", width=120, height=34,
+                      image=self._icons["printer"], compound="left",
                       font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
                       fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
                       text_color=Palette.WHITE, corner_radius=6,
@@ -1541,7 +1568,8 @@ class App(ctk.CTk):
 
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=(4, 0))
-        ctk.CTkButton(btn_frame, text="🖨  Imprimir", width=120, height=34,
+        ctk.CTkButton(btn_frame, text="Imprimir", width=120, height=34,
+                      image=self._icons["printer"], compound="left",
                       font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
                       fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
                       text_color=Palette.WHITE, corner_radius=6,
@@ -1853,10 +1881,11 @@ class App(ctk.CTk):
         self.tarea_activa = False
         try:
             self._imp_btn_imprimir.configure(
-                text="🖨  IMPRIMIR", state="normal",
+                text="IMPRIMIR", state="normal",
+                image=self._icons["printer"], compound="left",
                 fg_color=Palette.ACCENT,
             )
-            self._imp_btn_refresh.configure(text="🔄  Refrescar", state="normal", command=self._imp_escanear_carpetas)
+            self._imp_btn_refresh.configure(text="Refrescar", image=self._icons["refresh-cw"], compound="left", state="normal", command=self._imp_escanear_carpetas)
         except (AttributeError, Exception):
             pass
 
@@ -1885,7 +1914,8 @@ class App(ctk.CTk):
 
         self.btn_ejecutar_planillas = ctk.CTkButton(
             btns_left,
-            text="▶  Completar Planillas",
+            text="Completar Planillas",
+            image=self._icons["play"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.ACCENT,
             hover_color=Palette.ACCENT_HOVER,
@@ -1896,7 +1926,8 @@ class App(ctk.CTk):
 
         self.btn_agregar_guarda = ctk.CTkButton(
             btns_left,
-            text="🛡  Agregar Guarda",
+            text="Agregar Guarda",
+            image=self._icons["shield"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY,
             hover_color=Palette.SECONDARY_HOVER,
@@ -1906,7 +1937,8 @@ class App(ctk.CTk):
         )
 
         self.btn_editar_excels = ctk.CTkButton(
-            btns_left, text="📝 Editar Excels",
+            btns_left, text="Editar Excels",
+            image=self._icons["pencil"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34, width=_btn_width,
@@ -1914,7 +1946,8 @@ class App(ctk.CTk):
         )
 
         self.btn_planilla_carga = ctk.CTkButton(
-            btns_left, text="📋 Planilla de Carga",
+            btns_left, text="Planilla de Carga",
+            image=self._icons["clipboard-list"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34, width=_btn_width,
@@ -2089,7 +2122,8 @@ class App(ctk.CTk):
 
         self.btn_ejecutar_correos = ctk.CTkButton(
             toolbar,
-            text="▶  Procesar y Despachar Correos",
+            text="Procesar y Despachar Correos",
+            image=self._icons["play"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.ACCENT,
             hover_color=Palette.ACCENT_HOVER,
@@ -2103,7 +2137,8 @@ class App(ctk.CTk):
 
         self.btn_elegir_correos = ctk.CTkButton(
             toolbar,
-            text="📂  Elegir Correos",
+            text="Elegir Correos",
+            image=self._icons["folder-open"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY,
             hover_color=Palette.SECONDARY_HOVER,
@@ -2228,33 +2263,34 @@ class App(ctk.CTk):
         self._panel_frames["descargar"] = frame
         # frame.pack(fill="both", expand=True) — packed by _cambiar_panel_forzado
 
-        # ── Toolbar 1: botones de búsqueda ────────────────────────────
-        toolbar1 = ctk.CTkFrame(
+        # ── Toolbar 1: botones de búsqueda (fila 1) ──────────────────
+        self._mail_row1 = ctk.CTkFrame(
             frame, fg_color=Palette.BG_CARD, corner_radius=8,
             border_width=1, border_color=Palette.BORDER, height=44
         )
-        toolbar1.pack(fill="x", pady=(0, 4))
-        toolbar1.pack_propagate(False)
+        self._mail_row1.pack(fill="x", pady=(0, 2))
+        self._mail_row1.pack_propagate(False)
 
         # Botón 1: Buscar y Descargar (modo automático, comportamiento original)
         self._mail_btn_buscar = ctk.CTkButton(
-            toolbar1,
-            text="📥  Buscar y Descargar",
+            self._mail_row1,
+            text="Buscar y Descargar",
+            image=self._icons["mail-search"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
-            text_color=Palette.WHITE, corner_radius=6, height=30, width=155,
+            text_color=Palette.WHITE, corner_radius=6, height=30, width=160,
             command=self._mail_ejecutar,
         )
         self._mail_btn_buscar.pack(side="left", padx=3, pady=3)
 
         ctk.CTkLabel(
-            toolbar1, text="Últimos:",
+            self._mail_row1, text="Últimos:",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
-            text_color=Palette.TEXT_SECONDARY,
+            text_color=Palette.TEXT_PRIMARY,
         ).pack(side="left", padx=(1, 0))
 
         self._mail_entry_cantidad = ctk.CTkEntry(
-            toolbar1, width=35, height=26,
+            self._mail_row1, width=35, height=26,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
@@ -2263,37 +2299,38 @@ class App(ctk.CTk):
         self._mail_entry_cantidad.pack(side="left")
 
         ctk.CTkLabel(
-            toolbar1, text="mails",
+            self._mail_row1, text="mails",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
-            text_color=Palette.TEXT_MUTED,
+            text_color=Palette.TEXT_PRIMARY,
         ).pack(side="left", padx=(1, 6))
 
         # Separador
         ctk.CTkLabel(
-            toolbar1, text="│",
+            self._mail_row1, text="│",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=Palette.BORDER,
         ).pack(side="left", padx=2)
 
         # Botón 2: Buscar con reglas (modo interactivo, el usuario elige qué descargar)
         self._mail_btn_buscar_reglas = ctk.CTkButton(
-            toolbar1,
-            text="🔍  Buscar",
+            self._mail_row1,
+            text="Buscar",
+            image=self._icons["search"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
-            text_color=Palette.WHITE, corner_radius=6, height=30, width=90,
+            text_color=Palette.WHITE, corner_radius=6, height=30, width=160,
             command=self._mail_ejecutar_buscar,
         )
         self._mail_btn_buscar_reglas.pack(side="left", padx=3, pady=3)
 
         ctk.CTkLabel(
-            toolbar1, text="Últimos:",
+            self._mail_row1, text="Últimos:",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
-            text_color=Palette.TEXT_SECONDARY,
+            text_color=Palette.TEXT_PRIMARY,
         ).pack(side="left", padx=(1, 0))
 
         self._mail_entry_cantidad_reglas = ctk.CTkEntry(
-            toolbar1, width=35, height=26,
+            self._mail_row1, width=35, height=26,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
@@ -2302,79 +2339,49 @@ class App(ctk.CTk):
         self._mail_entry_cantidad_reglas.pack(side="left")
 
         ctk.CTkLabel(
-            toolbar1, text="mails",
+            self._mail_row1, text="mails",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
-            text_color=Palette.TEXT_MUTED,
+            text_color=Palette.TEXT_PRIMARY,
         ).pack(side="left", padx=(1, 6))
 
-        # Separador
+        # Separador + Botón 3: Mail sin filtros + entry (se baja a fila 2 si no entra)
+        self._mail_ultimos_row1 = ctk.CTkFrame(self._mail_row1, fg_color="transparent")
+
         ctk.CTkLabel(
-            toolbar1, text="│",
+            self._mail_ultimos_row1, text="│",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             text_color=Palette.BORDER,
         ).pack(side="left", padx=2)
 
-        # Botón 3: Mail sin filtros (últimos N sin filtrar)
         self._mail_btn_ultimos = ctk.CTkButton(
-            toolbar1,
-            text="📋  Mail sin filtros",
+            self._mail_ultimos_row1,
+            text="Mail sin filtros",
+            image=self._icons["mail"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
-            text_color=Palette.WHITE, corner_radius=6, height=30, width=135,
+            text_color=Palette.WHITE, corner_radius=6, height=30, width=160,
             command=self._mail_ejecutar_ultimos,
         )
         self._mail_btn_ultimos.pack(side="left", padx=3, pady=3)
 
-        self._mail_entry_sin_filtro = ctk.CTkEntry(
-            toolbar1, width=40, height=28,
+        self._mail_entry_sin_filtro_r1 = ctk.CTkEntry(
+            self._mail_ultimos_row1, width=40, height=28,
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4,
         )
-        self._mail_entry_sin_filtro.insert(0, self.config.get("descarga_mails", {}).get("sin_filtro", "20"))
-        self._mail_entry_sin_filtro.pack(side="left", padx=(4, 0))
+        self._mail_entry_sin_filtro_r1.insert(0, self.config.get("descarga_mails", {}).get("sin_filtro", "20"))
+        self._mail_entry_sin_filtro_r1.pack(side="left", padx=(4, 0))
 
         ctk.CTkLabel(
-            toolbar1, text="mails",
+            self._mail_ultimos_row1, text="mails",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
-            text_color=Palette.TEXT_MUTED,
+            text_color=Palette.TEXT_PRIMARY,
         ).pack(side="left", padx=(1, 4))
 
-        # ── Toolbar 2: descarga de seleccionados + progreso ────────────
-        toolbar2 = ctk.CTkFrame(
-            frame, fg_color=Palette.BG_CARD, corner_radius=8,
-            border_width=1, border_color=Palette.BORDER, height=36
-        )
-        toolbar2.pack(fill="x", pady=(0, 6))
-        toolbar2.pack_propagate(False)
-
-        self._mail_btn_descargar_sel = ctk.CTkButton(
-            toolbar2,
-            text="⬇  Descargar seleccionados",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
-            text_color=Palette.WHITE, corner_radius=6, height=30, width=180,
-            command=self._mail_descargar_seleccionados,
-        )
-        self._mail_btn_descargar_sel.pack(side="left", padx=8, pady=4)
-
-        self._mail_progress = ctk.CTkProgressBar(
-            toolbar2, width=120, height=8, corner_radius=4,
-            fg_color=Palette.BG_INPUT, progress_color=Palette.ACCENT,
-        )
-        self._mail_progress.pack(side="right", padx=10)
-        self._mail_progress.set(0)
-
-        self._mail_lbl_estado = ctk.CTkLabel(
-            toolbar2,
-            text="Listo — Buscar mails de 'papeles' o Últimos 20",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
-            text_color=Palette.TEXT_MUTED,
-        )
-        self._mail_lbl_estado.pack(side="right", padx=6)
-
+        # Botón Limpiar (siempre en fila 1, a la derecha)
         self.btn_limpiar_mail = ctk.CTkButton(
-            toolbar2,
+            self._mail_row1,
             text="Limpiar",
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color="transparent",
@@ -2384,6 +2391,105 @@ class App(ctk.CTk):
             command=self._limpiar_mail,
         )
         self.btn_limpiar_mail.pack(side="right", padx=4)
+
+        # ── Fila 2: Descargar seleccionados + Mail sin filtros (baja si no entra arriba) ──
+        self._mail_row2 = ctk.CTkFrame(
+            frame, fg_color=Palette.BG_CARD, corner_radius=8,
+            border_width=1, border_color=Palette.BORDER, height=40
+        )
+        self._mail_row2.pack(fill="x", pady=(0, 2))
+        self._mail_row2.pack_propagate(False)
+
+        self._mail_btn_descargar_sel = ctk.CTkButton(
+            self._mail_row2,
+            text="Descargar Selección",
+            image=self._icons["cloud-download"], compound="left",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.WHITE, corner_radius=6, height=30, width=160,
+            command=self._mail_descargar_seleccionados,
+        )
+        self._mail_btn_descargar_sel.pack(side="left", padx=4, pady=5)
+
+        # Contenedor para "Mail sin filtros" en fila 2 (se muestra/oculta dinámicamente)
+        self._mail_ultimos_container = ctk.CTkFrame(self._mail_row2, fg_color="transparent")
+        # No se packea aquí — se gestiona por _mail_on_resize
+
+        ctk.CTkLabel(
+            self._mail_ultimos_container, text="│",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=Palette.BORDER,
+        ).pack(side="left", padx=2)
+
+        self._mail_btn_ultimos_2 = ctk.CTkButton(
+            self._mail_ultimos_container,
+            text="Mail sin filtros",
+            image=self._icons["mail"], compound="left",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
+            text_color=Palette.WHITE, corner_radius=6, height=30, width=160,
+            command=self._mail_ejecutar_ultimos,
+        )
+        self._mail_btn_ultimos_2.pack(side="left", padx=3, pady=3)
+
+        self._mail_entry_sin_filtro = ctk.CTkEntry(
+            self._mail_ultimos_container, width=40, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=4,
+        )
+        self._mail_entry_sin_filtro.insert(0, self.config.get("descarga_mails", {}).get("sin_filtro", "20"))
+        self._mail_entry_sin_filtro.pack(side="left", padx=(4, 0))
+
+        ctk.CTkLabel(
+            self._mail_ultimos_container, text="mails",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11),
+            text_color=Palette.TEXT_PRIMARY,
+        ).pack(side="left", padx=(1, 4))
+
+        self._mail_progress = ctk.CTkProgressBar(
+            self._mail_row2, width=120, height=8, corner_radius=4,
+            fg_color=Palette.BG_INPUT, progress_color=Palette.ACCENT,
+        )
+        self._mail_progress.pack(side="right", padx=10)
+        self._mail_progress.set(0)
+
+        self._mail_lbl_estado = ctk.CTkLabel(
+            self._mail_row2,
+            text="",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            text_color=Palette.TEXT_MUTED,
+        )
+        self._mail_lbl_estado.pack(side="right", padx=6)
+
+        # ── Responsive: si no entra "Mail sin filtros" en fila 1, bajarlo a fila 2 ──
+        def _mail_sync_entries():
+            """Sincronizar el valor del entry visible al oculto."""
+            try:
+                if self._mail_ultimos_row1.winfo_ismapped():
+                    val = self._mail_entry_sin_filtro_r1.get().strip()
+                else:
+                    val = self._mail_entry_sin_filtro.get().strip()
+                for entry in (self._mail_entry_sin_filtro_r1, self._mail_entry_sin_filtro):
+                    entry.delete(0, "end")
+                    entry.insert(0, val)
+            except Exception:
+                pass
+
+        def _mail_on_resize(event):
+            was_mapped = self._mail_ultimos_row1.winfo_ismapped()
+            if event.width >= 850:
+                if not was_mapped:
+                    _mail_sync_entries()
+                self._mail_ultimos_row1.pack(side="left")
+                self._mail_ultimos_container.pack_forget()
+            else:
+                if was_mapped:
+                    _mail_sync_entries()
+                self._mail_ultimos_row1.pack_forget()
+                self._mail_ultimos_container.pack(side="left", padx=(4, 0))
+
+        frame.bind("<Configure>", _mail_on_resize)
 
         # ── Tabla de mails ────────────────────────────────────────────
         tabla_frame = ctk.CTkFrame(
@@ -2423,23 +2529,38 @@ class App(ctk.CTk):
         self._mail_tree.heading("fecha", text="Fecha")
         self._mail_tree.heading("adjuntos", text="Adjuntos")
         self._mail_tree.heading("carpeta", text="Carpeta destino")
-        self._mail_tree.column("sel", width=35, anchor="center", stretch=False)
-        self._mail_tree.column("asunto", width=280, anchor="w")
-        self._mail_tree.column("fecha", width=130, anchor="center")
-        self._mail_tree.column("adjuntos", width=70, anchor="center")
-        self._mail_tree.column("carpeta", width=260, anchor="w")
+
+        # Restaurar anchos de columna guardados (si existen)
+        _saved_cols = self.config.get("mail_tree_columns", {})
+        self._mail_tree.column("sel", width=_saved_cols.get("sel", 35), anchor="center", stretch=False)
+        self._mail_tree.column("asunto", width=_saved_cols.get("asunto", 280), anchor="w")
+        self._mail_tree.column("fecha", width=_saved_cols.get("fecha", 130), anchor="center")
+        self._mail_tree.column("adjuntos", width=_saved_cols.get("adjuntos", 70), anchor="center")
+        self._mail_tree.column("carpeta", width=_saved_cols.get("carpeta", 260), anchor="w")
 
         # Bind para toggle del checkbox al clickear en la columna "✓"
         self._mail_tree.bind("<ButtonRelease-1>", self._mail_toggle_check)
 
-        scroll = ctk.CTkScrollbar(
+        # Scrollbar vertical
+        scroll_v = ctk.CTkScrollbar(
             tabla_frame, orientation="vertical",
             fg_color=Palette.BG_CARD, button_color=Palette.TEXT_MUTED,
             button_hover_color=Palette.TEXT_SECONDARY,
         )
-        scroll.pack(side="right", fill="y", padx=(0, 2), pady=2)
-        self._mail_tree.configure(yscrollcommand=scroll.set)
-        scroll.configure(command=self._mail_tree.yview)
+        scroll_v.pack(side="right", fill="y", padx=(0, 2), pady=2)
+        self._mail_tree.configure(yscrollcommand=scroll_v.set)
+        scroll_v.configure(command=self._mail_tree.yview)
+
+        # Scrollbar horizontal
+        scroll_h = ctk.CTkScrollbar(
+            tabla_frame, orientation="horizontal",
+            fg_color=Palette.BG_CARD, button_color=Palette.TEXT_MUTED,
+            button_hover_color=Palette.TEXT_SECONDARY,
+        )
+        scroll_h.pack(side="bottom", fill="x", padx=2, pady=(0, 2))
+        self._mail_tree.configure(xscrollcommand=scroll_h.set)
+        scroll_h.configure(command=self._mail_tree.xview)
+
         self._mail_tree.pack(fill="both", expand=True, padx=2, pady=2)
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2500,7 +2621,12 @@ class App(ctk.CTk):
             messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
             return
         try:
-            cantidad = int(self._mail_entry_sin_filtro.get().strip())
+            # Leer del entry visible (fila 1 o fila 2)
+            if self._mail_ultimos_row1.winfo_ismapped():
+                raw = self._mail_entry_sin_filtro_r1.get().strip()
+            else:
+                raw = self._mail_entry_sin_filtro.get().strip()
+            cantidad = int(raw)
         except ValueError:
             cantidad = 20
         self.tarea_activa = True
@@ -2751,7 +2877,7 @@ class App(ctk.CTk):
             mails_encontrados.sort(key=lambda x: x[0], reverse=True)
             seleccionados = mails_encontrados[:cantidad]
             mail.logout()
-            self._log(f"{len(seleccionados)} mails encontrados. Marcá los que quieras descargar y presioná 'Descargar seleccionados'.")
+            self._log(f"{len(seleccionados)} mails encontrados. Marcá los que quieras descargar y presioná 'Descargar Selección'.")
 
             # Poblar el tree en una sola pasada por el UI thread
             def poblar_tree():
@@ -2908,10 +3034,10 @@ class App(ctk.CTk):
     def _mail_done(self, resultados, modo=0):
         self.tarea_activa = False
         try:
-            self._mail_btn_buscar.configure(text="📥  Buscar y Descargar", state="normal")
-            self._mail_btn_buscar_reglas.configure(text="🔍  Buscar", state="normal")
-            self._mail_btn_ultimos.configure(text="📋  Mail sin filtros", state="normal")
-            self._mail_btn_descargar_sel.configure(text="⬇  Descargar seleccionados", state="normal")
+            self._mail_btn_buscar.configure(text="Buscar y Descargar", state="normal")
+            self._mail_btn_buscar_reglas.configure(text="Buscar", state="normal")
+            self._mail_btn_ultimos.configure(text="Mail sin filtros", state="normal")
+            self._mail_btn_descargar_sel.configure(text="Descargar Selección", state="normal")
             self._mail_progress.stop()
             self._mail_progress.set(1)
         except (AttributeError, Exception):
@@ -3686,7 +3812,8 @@ class App(ctk.CTk):
 
         self.btn_backup_pendrive = ctk.CTkButton(
             toolbar,
-            text="💿  Back Up",
+            text="Back Up",
+            image=self._icons["hard-drive"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=34, width=170,
@@ -3863,7 +3990,7 @@ class App(ctk.CTk):
     def _backup_done(self):
         self.tarea_activa = False
         try:
-            self.btn_backup_pendrive.configure(text="💿  Back Up", state="normal", fg_color=Palette.SECONDARY)
+            self.btn_backup_pendrive.configure(text="Back Up", state="normal", fg_color=Palette.SECONDARY)
             self.progress_backup.stop()
             self.progress_backup.set(1)
             self.lbl_estado_backup.configure(text="Backup completado", text_color=Palette.SUCCESS)
@@ -4548,7 +4675,7 @@ class App(ctk.CTk):
         self.tarea_activa = False
         try:
             self.btn_planilla_carga.configure(
-                text="📋 Planilla de Carga", state="normal",
+                text="Planilla de Carga", state="normal",
             )
             self.btn_ejecutar_planillas.configure(state="normal")
             self.progress_planillas.stop()
@@ -4619,7 +4746,7 @@ class App(ctk.CTk):
         self.tarea_activa = False
         try:
             self.btn_agregar_guarda.configure(
-                text="🛡  Agregar Guarda", state="normal",
+                text="Agregar Guarda", state="normal",
                 fg_color=Palette.SECONDARY)
             self.btn_ejecutar_planillas.configure(state="normal")
             self.progress_planillas.stop()
@@ -4699,7 +4826,8 @@ class App(ctk.CTk):
         frame_sel.pack(pady=(4, 12))
 
         ctk.CTkButton(
-            frame_sel, text="✓ Seleccionar Todo",
+            frame_sel, text="Seleccionar Todo",
+            image=self._icons["check"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=32, width=150,
@@ -4707,7 +4835,8 @@ class App(ctk.CTk):
         ).pack(side="left", padx=6)
 
         ctk.CTkButton(
-            frame_sel, text="✗ Ninguno",
+            frame_sel, text="Ninguno",
+            image=self._icons["x"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
             text_color=Palette.TEXT_SECONDARY, corner_radius=6, height=32, width=110,
@@ -4716,7 +4845,8 @@ class App(ctk.CTk):
 
         # ── Botón Completar ───────────────────────────────────────
         btn_completar = ctk.CTkButton(
-            popup, text="▶  Completar",
+            popup, text="Completar",
+            image=self._icons["play"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=38,
@@ -5979,7 +6109,7 @@ class App(ctk.CTk):
         self.tarea_activa = False
         try:
             self.btn_ejecutar_planillas.configure(
-                text="▶  Completar Planillas",
+                text="Completar Planillas",
                 state="normal",
                 fg_color=Palette.ACCENT,
             )
@@ -6165,7 +6295,9 @@ class App(ctk.CTk):
             self._despachar_carpetas(seleccionadas, incluir_plt, incluir_plt_mar)
 
         ctk.CTkButton(
-            btn_frame, text="📤  Enviar Seleccionados", width=200, height=34,
+            btn_frame, text="Enviar Seleccionados",
+            image=self._icons["send"], compound="left",
+            width=200, height=34,
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6,
@@ -6590,12 +6722,12 @@ class App(ctk.CTk):
         self.tarea_activa = False
         try:
             self.btn_ejecutar_correos.configure(
-                text="▶  Procesar y Despachar Correos",
+                text="Procesar y Despachar Correos",
                 state="normal",
                 fg_color=Palette.ACCENT,
             )
             self.btn_elegir_correos.configure(
-                text="📂  Elegir Correos",
+                text="Elegir Correos",
                 state="normal",
                 fg_color=Palette.SECONDARY,
             )
@@ -7722,7 +7854,8 @@ class App(ctk.CTk):
 
             self.btn_controlar_tickets = ctk.CTkButton(
                 toolbar,
-                text="🎫  Controlar Tickets",
+                text="Controlar Tickets",
+                image=self._icons["ticket"], compound="left",
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
                 fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
                 text_color=Palette.WHITE, corner_radius=6, height=34, width=170,
@@ -7759,7 +7892,8 @@ class App(ctk.CTk):
         # ── Grupo Control Tickets ──────────────────────────────────
         self.btn_controlar_tickets = ctk.CTkButton(
             toolbar,
-            text="🎫  Controlar Tickets",
+            text="Controlar Tickets",
+            image=self._icons["ticket"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=34, width=150,
@@ -7780,7 +7914,7 @@ class App(ctk.CTk):
         # Restore persisted state
         if self.config.get("cargar_datos_auto", False):
             self._ct_auto_var.set(True)
-            self.btn_controlar_tickets.configure(text="Controlar Tickets ⚡")
+            self.btn_controlar_tickets.configure(text="Controlar Tickets ⚡", image=self._icons["zap"])
 
         # ── Separador vertical ──────────────────────────────────────
         ctk.CTkFrame(
@@ -7789,7 +7923,8 @@ class App(ctk.CTk):
 
         self.btn_controlar_coordinacion = ctk.CTkButton(
             toolbar,
-            text="📋  Controlar Coordinación",
+            text="Controlar Coordinación",
+            image=self._icons["clipboard-list"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=34, width=150,
@@ -7805,6 +7940,7 @@ class App(ctk.CTk):
         self.btn_control_final = ctk.CTkButton(
             toolbar,
             text="Control Final",
+            image=self._icons["zap"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
             fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
             text_color=Palette.WHITE, corner_radius=6, height=34, width=150,
@@ -7827,7 +7963,7 @@ class App(ctk.CTk):
         # Restore auto mode state from config
         if self.config.get("control_final_auto", False):
             self._cf_auto_var.set(True)
-            self.btn_control_final.configure(text="Control Final ⚡")
+            self.btn_control_final.configure(text="Control Final ⚡", image=self._icons["zap"])
 
         self.progress_carga = ctk.CTkProgressBar(
             toolbar, width=140, height=8, corner_radius=4,
@@ -8052,9 +8188,7 @@ class App(ctk.CTk):
         for row in self._mail_tree.get_children():
             self._mail_tree.delete(row)
         self._mail_data.clear()
-        self._mail_lbl_estado.configure(
-            text="Listo — Buscar mails de 'papeles' o Últimos 20"
-        )
+        self._mail_lbl_estado.configure(text="")
         self._mail_progress.set(0)
 
     # ── Limpiar vista — correos ────────────────────────────────────────
@@ -8507,9 +8641,9 @@ class App(ctk.CTk):
     def _control_final_switch_toggle(self):
         """Toggle auto mode. Changes btn text hint and persists state."""
         if self._cf_auto_var.get():
-            self.btn_control_final.configure(text="Control Final ⚡")
+            self.btn_control_final.configure(text="Control Final ⚡", image=self._icons["zap"])
         else:
-            self.btn_control_final.configure(text="Control Final")
+            self.btn_control_final.configure(text="Control Final", image=self._icons["zap"])
         # Persist state
         self.config["control_final_auto"] = self._cf_auto_var.get()
         self._guardar_config()
@@ -9738,9 +9872,9 @@ class App(ctk.CTk):
     def _cargar_datos_switch_toggle(self):
         """Toggle auto mode for Control Tickets. Changes btn text hint and persists state."""
         if self._ct_auto_var.get():
-            self.btn_controlar_tickets.configure(text="Controlar Tickets ⚡")
+            self.btn_controlar_tickets.configure(text="Controlar Tickets ⚡", image=self._icons["zap"])
         else:
-            self.btn_controlar_tickets.configure(text="Controlar Tickets")
+            self.btn_controlar_tickets.configure(text="Controlar Tickets", image=self._icons["ticket"])
         self.config["cargar_datos_auto"] = self._ct_auto_var.get()
         self._guardar_config()
 
@@ -11130,14 +11264,14 @@ class App(ctk.CTk):
         self._ajustes_tabs = {}
         self._ajustes_frames = {}
         tab_names = [
-            ("correo", "📧  Correo"),
-            ("documentos", "📄  Documentos"),
-            ("descarga", "📩  Descarga Mails"),
-            ("rutas", "📁  Rutas"),
-            ("valores", "💰  Valores"),
-            ("seguridad", "🔒  Seguridad"),
-            ("ocr", "🤖  OCR"),
-            ("apariencia", "🎨  Apariencia"),
+            ("correo", "Correo", "settings"),
+            ("documentos", "Documentos", "file-text"),
+            ("descarga", "Descarga Mails", "inbox"),
+            ("rutas", "Rutas", "folder"),
+            ("valores", "Valores", "banknote"),
+            ("seguridad", "Seguridad", "lock"),
+            ("ocr", "OCR", "bot"),
+            ("apariencia", "Apariencia", "palette"),
         ]
 
         def cambiar_tab(nombre):
@@ -11154,7 +11288,7 @@ class App(ctk.CTk):
                 self._ajustes_builders[nombre](fr)
             fr.pack(fill="both", expand=True)
 
-        tab_keys = [k for k, _ in tab_names]
+        tab_keys = [t[0] for t in tab_names]
 
         def _reflow_tabs(event=None):
             fw = tabs_frame.winfo_width()
@@ -11165,9 +11299,11 @@ class App(ctk.CTk):
             for i, key in enumerate(tab_keys):
                 self._ajustes_tabs[key].grid(row=i // cols, column=i % cols, padx=2, pady=2, sticky="w")
 
-        for key, label in tab_names:
+        for key, label, icon_key in tab_names:
             btn = ctk.CTkButton(
                 tabs_frame, text=label,
+                image=self._icons[icon_key] if icon_key else None,
+                compound="left" if icon_key else "none",
                 font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
                 fg_color="transparent", hover_color=Palette.BG_HOVER,
                 text_color=Palette.TEXT_SECONDARY,
@@ -11187,7 +11323,7 @@ class App(ctk.CTk):
         content_frame = ctk.CTkFrame(frame, fg_color="transparent")
         content_frame.pack(fill="both", expand=True)
 
-        for key, _ in tab_names:
+        for key, _, _ in tab_names:
             sub = ctk.CTkScrollableFrame(
                 content_frame, fg_color=Palette.BG_CARD, corner_radius=8,
                 border_width=1, border_color=Palette.BORDER,
@@ -11217,7 +11353,8 @@ class App(ctk.CTk):
 
         ctk.CTkButton(
             save_frame,
-            text="💾  Guardar Cambios",
+            text="Guardar",
+            image=self._icons["save"], compound="left",
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             fg_color=Palette.SUCCESS, hover_color="#00c853",
             text_color=Palette.WHITE, corner_radius=6, height=34, width=190,
@@ -11298,14 +11435,20 @@ class App(ctk.CTk):
             )
             e.pack(side="left")
             self._pw_visible = False
+            pw_toggle_btn = ctk.CTkButton(
+                erow, text="",
+                image=self._icons["eye"],
+                width=30, height=30,
+                font=ctk.CTkFont(size=14),
+                fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
+                text_color=Palette.TEXT_MUTED, corner_radius=4,
+                command=None,
+            )
+            pw_toggle_btn.pack(side="left", padx=(4, 0))
             def _toggle():
                 self._pw_visible = not self._pw_visible
                 e.configure(show="" if self._pw_visible else "*")
-            ctk.CTkButton(erow, text="👁", width=30, height=30,
-                          font=ctk.CTkFont(size=14),
-                          fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
-                          text_color=Palette.TEXT_MUTED, corner_radius=4,
-                          command=_toggle).pack(side="left", padx=(4, 0))
+            pw_toggle_btn.configure(command=_toggle)
         else:
             e = ctk.CTkEntry(
                 row, width=width, height=30,
@@ -12031,7 +12174,8 @@ class App(ctk.CTk):
             # Sincronizar los entries del panel Correos (si aún existen)
             for attr, src in [('_mail_entry_cantidad', '_ent_descarga_papeles'),
                               ('_mail_entry_cantidad_reglas', '_ent_descarga_reglas'),
-                              ('_mail_entry_sin_filtro', '_ent_descarga_sin_filtro')]:
+                              ('_mail_entry_sin_filtro', '_ent_descarga_sin_filtro'),
+                              ('_mail_entry_sin_filtro_r1', '_ent_descarga_sin_filtro')]:
                 w = _g(attr)
                 if w is not None and w.winfo_exists():
                     src_w = _g(src)
@@ -12143,6 +12287,12 @@ class App(ctk.CTk):
                 sash = self.paned_window.sash_coord(0)
                 if self.panel_actual and sash[1] > 0:
                     self.config[f"sash_{self.panel_actual}"] = sash[1]
+            # Guardar anchos de columna del árbol de mails
+            if hasattr(self, '_mail_tree') and self._mail_tree.winfo_exists():
+                self.config["mail_tree_columns"] = {
+                    col: self._mail_tree.column(col, "width")
+                    for col in ("sel", "asunto", "fecha", "adjuntos", "carpeta")
+                }
             with open(self.config_file, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2)
         except Exception as e:
