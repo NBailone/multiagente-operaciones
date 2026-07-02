@@ -22,6 +22,8 @@ a = Analysis(
         ('engines', 'engines'),
         # Poppler (pdf2image)
         ('poppler', 'poppler'),
+        # Assets (iconos, etc.)
+        ('assets', 'assets'),
     ],
     hiddenimports=[
         'customtkinter',
