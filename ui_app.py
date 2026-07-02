@@ -9054,7 +9054,10 @@ class App(ctk.CTk):
                         excel_por_patente.setdefault(pat, []).append((v, ci))
                     prec = cam.get("precinto", "").upper().strip()
                     if prec:
-                        excel_por_precinto.setdefault(prec, []).append((v, ci))
+                        # Normalizar: dividir por guión para crear key individual
+                        for pp in prec.replace("-", " ").split():
+                            if pp:
+                                excel_por_precinto.setdefault(pp, []).append((v, ci))
                     dni = _re.sub(r'\D', '', str(cam.get("dni", "")))
                     if dni:
                         excel_por_dni.setdefault(dni, []).append((v, ci))
@@ -9597,8 +9600,8 @@ class App(ctk.CTk):
             else:
                 # Para Precinto: si hay multi-precinto, verificar solapamiento
                 if campo == "Precinto" and len(vals) > 1:
-                    cont_codes = set(v_cont.split()) if v_cont else set()
-                    adu_codes = set(aduana_val.split()) if aduana_val else set()
+                    cont_codes = set(v_cont.replace("-", " ").split()) if v_cont else set()
+                    adu_codes = set(aduana_val.replace("-", " ").split()) if aduana_val else set()
                     if cont_codes & adu_codes:
                         ok_map[campo] = True
                     else:
@@ -10625,7 +10628,47 @@ class App(ctk.CTk):
                     if precintos:
                         for i, camion in enumerate(camiones):
                             if i < len(precintos) and precintos[i]:
-                                camion["precinto"] = precintos[i]
+                                # Dividir precintos unidos por guión: "JI49558-JI49559" → "JI49558-JI49559"
+                                partes = [p.strip() for p in precintos[i].replace("-", " ").split() if p.strip()]
+                                camion["precinto"] = "-".join(partes) if partes else ""
+
+                    # ── Fallback Choferes: si DATOS no tiene patente/chofer/DNI ──
+                    if camiones and not camiones[0].get("patente_camion"):
+                        ws_ch = wb['Choferes']
+                        # Detectar columnas por headers
+                        h_cols = {}
+                        for c in range(1, ws_ch.max_column + 1):
+                            v = ws_ch.cell(1, c).value
+                            if v:
+                                h = str(v).upper()
+                                if 'DOMINIO' in h and 'TRACTOR' in h:
+                                    h_cols['tractor'] = c
+                                if 'DOMINIO' in h and 'SEMI' in h:
+                                    h_cols['semi'] = c
+                                if 'NOMBRE' in h and 'CHOFER' in h:
+                                    h_cols['chofer'] = c
+                                if 'DNI' in h and 'CHOFER' in h:
+                                    h_cols['dni'] = c
+                        # Rellenar desde fila 2 de Choferes
+                        for i, camion in enumerate(camiones):
+                            r_ch = i + 2  # fila 2 = primer camión
+                            if r_ch <= ws_ch.max_row:
+                                if not camion.get("patente_camion") and 'tractor' in h_cols:
+                                    v = ws_ch.cell(r_ch, h_cols['tractor']).value
+                                    if v:
+                                        camion["patente_camion"] = str(v).strip()
+                                if not camion.get("patente_semi") and 'semi' in h_cols:
+                                    v = ws_ch.cell(r_ch, h_cols['semi']).value
+                                    if v:
+                                        camion["patente_semi"] = str(v).strip()
+                                if not camion.get("conductor") and 'chofer' in h_cols:
+                                    v = ws_ch.cell(r_ch, h_cols['chofer']).value
+                                    if v:
+                                        camion["conductor"] = str(v).strip()
+                                if not camion.get("dni") and 'dni' in h_cols:
+                                    v = ws_ch.cell(r_ch, h_cols['dni']).value
+                                    if v is not None:
+                                        camion["dni"] = str(int(v)) if isinstance(v, (int, float)) else str(v).strip()
 
                 wb.close()
 
@@ -10745,7 +10788,45 @@ class App(ctk.CTk):
                     if precintos:
                         for i, camion in enumerate(camiones):
                             if i < len(precintos) and precintos[i]:
-                                camion["precinto"] = precintos[i]
+                                # Dividir precintos unidos por guión: "JI49558-JI49559" → "JI49558-JI49559"
+                                partes = [p.strip() for p in precintos[i].replace("-", " ").split() if p.strip()]
+                                camion["precinto"] = "-".join(partes) if partes else ""
+
+                    # ── Fallback Choferes: si DATOS no tiene patente/chofer/DNI ──
+                    if camiones and not camiones[0].get("patente_camion"):
+                        ws_ch = book.sheet_by_name('Choferes')
+                        h_cols = {}
+                        for c in range(ws_ch.ncols):
+                            v = ws_ch.cell_value(0, c)
+                            if v:
+                                h = str(v).upper()
+                                if 'DOMINIO' in h and 'TRACTOR' in h:
+                                    h_cols['tractor'] = c
+                                if 'DOMINIO' in h and 'SEMI' in h:
+                                    h_cols['semi'] = c
+                                if 'NOMBRE' in h and 'CHOFER' in h:
+                                    h_cols['chofer'] = c
+                                if 'DNI' in h and 'CHOFER' in h:
+                                    h_cols['dni'] = c
+                        for i, camion in enumerate(camiones):
+                            r_ch = i + 1  # xlrd: row 1 = primer dato
+                            if r_ch < ws_ch.nrows:
+                                if not camion.get("patente_camion") and 'tractor' in h_cols:
+                                    v = ws_ch.cell_value(r_ch, h_cols['tractor'])
+                                    if v:
+                                        camion["patente_camion"] = str(v).strip()
+                                if not camion.get("patente_semi") and 'semi' in h_cols:
+                                    v = ws_ch.cell_value(r_ch, h_cols['semi'])
+                                    if v:
+                                        camion["patente_semi"] = str(v).strip()
+                                if not camion.get("conductor") and 'chofer' in h_cols:
+                                    v = ws_ch.cell_value(r_ch, h_cols['chofer'])
+                                    if v:
+                                        camion["conductor"] = str(v).strip()
+                                if not camion.get("dni") and 'dni' in h_cols:
+                                    v = ws_ch.cell_value(r_ch, h_cols['dni'])
+                                    if v is not None:
+                                        camion["dni"] = str(int(v)) if isinstance(v, float) and v == int(v) else str(v).strip()
 
         except Exception as ex:
             self.log_queue.put((self._log_warning,

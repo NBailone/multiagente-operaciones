@@ -832,8 +832,8 @@ def extraer_datos(text: str) -> dict:
     datos["Merc./Permiso"]       = _extraer_permiso(buscar(r"Merc[,.]?\s*y\s*Permiso\s*Emb[ae]r[cgq]ue?[:\s]+(.+)"))
     datos["Pallet"]              = buscar(r"PALLET[:\s]+(\w+)")
 
-    # Número de contenedor ISO/FLEXI: "Sigla Contenedor: MSMU 258531-2"
-    datos["Contenedor"] = buscar(r"Sigla Contenedor[:\s]+([A-Z]+\s*\d+[\s-]+\d+)")
+    # Número de contenedor ISO/FLEXI: "Sigla Contenedor: MSMU 258531-2" o "CODU2532432"
+    datos["Contenedor"] = buscar(r"Sigla Contenedor[:\s]+([A-Z]+\s*\d+(?:[\s-]*\d+)*)")
     # Tara Contenedor: para TODOS los tickets.
     # Orden: 1) valor cerca de Cert.Verif (más confiable), 2) inline tras label
     datos["Tara Contenedor"] = ""
@@ -1557,7 +1557,7 @@ def extraer_salida_aduana(pdf_path: str, modo: str = "flexi") -> dict:
         block = m.group(1).strip()
         parts = re.split(r'[\s\n\-]+', block)
         codes = [p.upper() for p in parts if p.strip() and len(p.strip()) >= 6 and not p.strip().isdigit()]
-        data["precinto"] = " ".join(sorted(set(codes)))
+        data["precinto"] = "-".join(sorted(set(codes)))
     else:
         data["precinto"] = ""
 
@@ -1683,10 +1683,17 @@ def extraer_mic_dta(pdf_path: str) -> dict:
         m = re.search(r"(\d[\d.,]*)", txt)
     data["peso_bruto"] = m.group(1).replace(",", "").replace(".", "") if m else ""
 
-    # Campo 37 — Precinto
+    # Campo 37 — Precinto(s): capturar TODOS los códigos, deduplicar preservando orden
     txt = _f(37)
-    m = re.search(r"([A-Z0-9]{6,})", txt)
-    data["precinto"] = m.group(1).strip() if m else ""
+    matches = re.findall(r"([A-Z0-9]{6,})", txt)
+    seen = set()
+    unique = []
+    for m in matches:
+        code = m.strip().upper()
+        if code not in seen:
+            seen.add(code)
+            unique.append(code)
+    data["precinto"] = "-".join(unique) if unique else ""
 
     # Campo 36 — Documentos Anexos / Destinación
     txt = _f(36)
