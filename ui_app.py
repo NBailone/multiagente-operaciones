@@ -91,7 +91,6 @@ _dotenv_path = os.path.join(_base_dir, ".env")
 
 dotenv.load_dotenv(_dotenv_path)
 
-
 def _ensure_secret_key(dotenv_path: str) -> None:
     key = os.environ.get("MULTIAGENTE_SECRET_KEY")
     if key:
@@ -104,7 +103,6 @@ def _ensure_secret_key(dotenv_path: str) -> None:
     except OSError:
         print(f"[WARN] Could not write {dotenv_path} — key in memory only for this session.")
     os.environ["MULTIAGENTE_SECRET_KEY"] = key
-
 
 _ensure_secret_key(_dotenv_path)
 
@@ -7039,6 +7037,7 @@ class App(ctk.CTk):
         neto_ocr  = ticket.get("neto", 0)
         tara_ocr  = ticket.get("tara", 0)
         contenedor_str = ticket.get("contenedor", "")
+        contenedor_display = contenedor_str if contenedor_str else "-"
         permiso   = ticket.get("permiso", "")
 
         import re as _re
@@ -7132,9 +7131,9 @@ class App(ctk.CTk):
             iid = f"ocr_{self._cargar_datos_idx}"
             self._cargar_datos_idx += 1
             estado = "⚠ No encontrado"
-            valores = (archivo, patente, semi, conductor,
+            valores = (data.get("cliente", archivo), patente, semi, conductor,
                        self._fmt_dni(dni), self._fmt_kg(neto_ocr), self._fmt_kg(tara_ocr),
-                       contenedor_str, permiso, estado)
+                       contenedor_display, permiso, estado)
             try:
                 self.tree_carga.insert("", "end", values=valores, iid=iid,
                                        tags=("tag_no_match",))
@@ -7193,15 +7192,14 @@ class App(ctk.CTk):
             estado = "❌ Diferencia"
             tag = "tag_mismatch"
 
-        # Insertar fila única en TreeView
         iid = f"ocr_{self._cargar_datos_idx}"
         self._cargar_datos_idx += 1
         nombre_contenedor = os.path.basename(ruta_match)
         valores = (
-            f"📄 {archivo}",
+            data.get("cliente", archivo),
             patente, semi, conductor, self._fmt_dni(dni),
             self._fmt_kg(neto_ocr), self._fmt_kg(tara_ocr),
-            contenedor_str,
+            contenedor_display,
             permiso, estado,
         )
         try:
@@ -7220,7 +7218,7 @@ class App(ctk.CTk):
                 "DNI": dni,
                 "Neto (kg)": f"{neto_ocr:.0f}",
                 "Tara (kg)": f"{tara_ocr:.0f}",
-                "Contenedor": contenedor_str,
+                "Contenedor": contenedor_display,
                 "Permiso": permiso,
             },
             "contenedor": {
@@ -7230,7 +7228,7 @@ class App(ctk.CTk):
                 "DNI": cam_dni,
                 "Neto (kg)": f"{peso_carga:.0f}",
                 "Tara (kg)": f"{tara_cont:.0f}",
-                "Contenedor": camion_match.get("contenedor", ""),
+                "Contenedor": camion_match.get("contenedor", "") or "-",
                 "Permiso": pe_val,
             },
             "ok": {
@@ -7987,7 +7985,42 @@ class App(ctk.CTk):
         )
         self.btn_limpiar_carga.pack(side="right", padx=4, pady=4)
 
-        # ── Resultados (Frame + TreeView con scrollbars nativas) ──────
+        # ── Tab bar compacta ────────────────────────────────
+        tab_bar = ctk.CTkFrame(
+            frame, fg_color=Palette.BG_SIDEBAR, corner_radius=8, height=32,
+            border_width=1, border_color=Palette.BORDER,
+        )
+        tab_bar.pack(fill="x", pady=(6, 2))
+        tab_bar.pack_propagate(False)
+
+        tab_font = ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold")
+        _TAB_STEEL = "#546e7a"  # Distinct from toolbar blue/teal
+
+        self._tab_tickets = ctk.CTkLabel(
+            tab_bar, text="Control de Tickets", font=tab_font,
+            fg_color=_TAB_STEEL, text_color=Palette.WHITE,
+            corner_radius=6, padx=14, pady=4,
+        )
+        self._tab_tickets.pack(side="left", padx=4, pady=2)
+        self._tab_tickets.bind("<Button-1>", lambda e: self._switch_tab("tickets"))
+
+        self._tab_coord = ctk.CTkLabel(
+            tab_bar, text="Coordinación", font=tab_font,
+            fg_color="transparent", text_color=_TAB_STEEL,
+            corner_radius=6, padx=14, pady=4,
+        )
+        self._tab_coord.pack(side="left", padx=2, pady=2)
+        self._tab_coord.bind("<Button-1>", lambda e: self._switch_tab("coord"))
+
+        self._tab_final = ctk.CTkLabel(
+            tab_bar, text="Control Final", font=tab_font,
+            fg_color="transparent", text_color=_TAB_STEEL,
+            corner_radius=6, padx=14, pady=4,
+        )
+        self._tab_final.pack(side="left", padx=2, pady=2)
+        self._tab_final.bind("<Button-1>", lambda e: self._switch_tab("final"))
+
+        # ── Resultados (scroll frame + sections) ────────────────
         scroll = ctk.CTkFrame(
             frame, fg_color=Palette.BG_CARD, corner_radius=8,
             border_width=1, border_color=Palette.BORDER
@@ -8025,26 +8058,21 @@ class App(ctk.CTk):
             scroll, fg_color="transparent",
         )
 
-        ctk.CTkLabel(
-            self._section_tickets,
-            text="  Control de Tickets",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=Palette.TEXT_SECONDARY, anchor="w",
-        ).pack(fill="x", padx=8, pady=(6, 2))
-
-        columns = ("archivo", "patente", "semi", "conductor", "dni",
+        columns = ("cliente", "camion", "semi", "conductor", "dni",
                    "neto", "tara", "contenedor", "permiso", "estado")
-        headers = ("Archivo", "Patente", "Semirremolque", "Conductor", "DNI",
+        headers = ("Cliente", "Camion", "Semi", "Conductor", "DNI",
                    "Neto", "Tara", "Contenedor", "Permiso", "Estado")
-        anchos = (180, 80, 80, 100, 80, 70, 70, 100, 100, 100)
+        anchos_default = (120, 80, 80, 100, 80, 70, 70, 100, 100, 100)
+        _saved_cols = self.config.get("tree_carga_columns", {})
 
         self.tree_carga = ttk.Treeview(
             self._section_tickets, columns=columns, show="headings",
             style="CargaDatos.Treeview", selectmode="browse",
         )
-        for col, hdr, w in zip(columns, headers, anchos):
+        for col, hdr, w_default in zip(columns, headers, anchos_default):
             self.tree_carga.heading(col, text=hdr)
-            self.tree_carga.column(col, width=w, anchor="center", minwidth=w)
+            w = _saved_cols.get(col, w_default)
+            self.tree_carga.column(col, width=w, anchor="center", minwidth=40)
 
         # Scrollbar vertical
         scroll_y = ctk.CTkScrollbar(
@@ -8073,7 +8101,6 @@ class App(ctk.CTk):
         self.tree_carga.tag_configure("tag_ok", background="#C8FFC8", foreground="#006400")
         self.tree_carga.tag_configure("tag_mismatch", background="#FFC8C8", foreground="#8B0000")
         self.tree_carga.tag_configure("tag_no_match", background="#FFF3E0", foreground="#E65100")
-
         self.tree_carga.bind("<Double-1>", self._abrir_comparacion)
 
         # ── Sección: Coordinación ISO/FLEXI ──────────────────────────
@@ -8081,28 +8108,23 @@ class App(ctk.CTk):
             scroll, fg_color="transparent",
         )
 
-        ctk.CTkLabel(
-            self._section_coord,
-            text="  Coordinación ISO/FLEXI",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=Palette.TEXT_SECONDARY, anchor="w",
-        ).pack(fill="x", padx=8, pady=(6, 2))
-
         cols_c = ("carpeta", "giro", "cliente", "destino",
                   "buque", "viaje", "booking", "pto_descarga", "pto_final",
                   "fecha_of_pe", "fecha_carga", "peso_flexi", "estado")
         hdrs_c = ("Carpeta", "Giro", "Cliente", "Destino",
                   "Buque", "Viaje", "Booking", "Pto Descarga", "Pto Final",
                   "Fec Of PE", "Fec Carga", "Peso Flexi", "Estado")
-        ancho_c = (100, 70, 220, 120, 180, 70, 160, 120, 120, 110, 110, 80, 80)
+        anchos_c_default = (100, 70, 220, 120, 180, 70, 160, 120, 120, 110, 110, 80, 80)
+        _saved_cols_c = self.config.get("tree_coordinacion_columns", {})
 
         self.tree_coordinacion = ttk.Treeview(
             self._section_coord, columns=cols_c, show="headings",
             style="CargaDatos.Treeview", selectmode="browse",
         )
-        for col, hdr, w in zip(cols_c, hdrs_c, ancho_c):
+        for col, hdr, w_default in zip(cols_c, hdrs_c, anchos_c_default):
             self.tree_coordinacion.heading(col, text=hdr)
-            self.tree_coordinacion.column(col, width=w, anchor="center", minwidth=w)
+            w = _saved_cols_c.get(col, w_default)
+            self.tree_coordinacion.column(col, width=w, anchor="center", minwidth=40)
 
         self.tree_coordinacion.tag_configure("tag_ok", background="#C8FFC8", foreground="#006400")
         self.tree_coordinacion.tag_configure("tag_mismatch", background="#FFC8C8", foreground="#8B0000")
@@ -8127,26 +8149,21 @@ class App(ctk.CTk):
             scroll, fg_color="transparent",
         )
 
-        ctk.CTkLabel(
-            self._section_final,
-            text="  Control Final",
-            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
-            text_color=Palette.TEXT_SECONDARY, anchor="w",
-        ).pack(fill="x", padx=8, pady=(6, 2))
-
-        cols_f = ("archivo", "patente", "semi", "conductor", "dni",
+        cols_f = ("cliente", "camion", "semi", "conductor", "dni",
                   "neto", "tara", "contenedor", "permiso", "estado", "salida_aduana")
-        hdrs_f = ("Archivo", "Patente", "Semirremolque", "Conductor", "DNI",
+        hdrs_f = ("Cliente", "Camion", "Semi", "Conductor", "DNI",
                   "Neto", "Tara", "Contenedor", "Permiso", "Estado", "Salida Aduana")
-        anchos_f = (180, 80, 80, 100, 80, 70, 70, 100, 100, 100, 100)
+        anchos_f_default = (120, 80, 80, 100, 80, 70, 70, 100, 100, 100, 100)
+        _saved_cols_f = self.config.get("tree_control_final_columns", {})
 
         self.tree_control_final = ttk.Treeview(
             self._section_final, columns=cols_f, show="headings",
             style="CargaDatos.Treeview", selectmode="browse",
         )
-        for col, hdr, w in zip(cols_f, hdrs_f, anchos_f):
+        for col, hdr, w_default in zip(cols_f, hdrs_f, anchos_f_default):
             self.tree_control_final.heading(col, text=hdr)
-            self.tree_control_final.column(col, width=w, anchor="center", minwidth=w)
+            w = _saved_cols_f.get(col, w_default)
+            self.tree_control_final.column(col, width=w, anchor="center", minwidth=40)
 
         self.tree_control_final.tag_configure("tag_ok", background="#C8FFC8", foreground="#006400")
         self.tree_control_final.tag_configure("tag_mismatch", background="#FFC8C8", foreground="#8B0000")
@@ -8165,7 +8182,6 @@ class App(ctk.CTk):
 
         self.tree_control_final.pack(fill="both", expand=True, padx=2, pady=(0, 8))
 
-        # Pack todas las secciones; ocultar coord y final por defecto
         for section in (self._section_tickets, self._section_coord, self._section_final):
             section.pack(fill="both", expand=True, pady=(0, 6))
         self._section_coord.pack_forget()
@@ -8173,6 +8189,22 @@ class App(ctk.CTk):
 
         # Todo listo — registrar el frame como completo en _panel_frames
         self._panel_frames["cargar-datos"] = frame
+
+    def _switch_tab(self, tab):
+        """Switch visible section and highlight active tab."""
+        _TAB_STEEL = "#546e7a"
+        tabs = {
+            "tickets": (self._tab_tickets, self._section_tickets),
+            "coord":   (self._tab_coord,   self._section_coord),
+            "final":   (self._tab_final,   self._section_final),
+        }
+        for name, (label, section) in tabs.items():
+            if name == tab:
+                label.configure(fg_color=_TAB_STEEL, text_color=Palette.WHITE)
+                section.pack(fill="both", expand=True, pady=(0, 6))
+            else:
+                label.configure(fg_color="transparent", text_color=_TAB_STEEL)
+                section.pack_forget()
 
     # ── Limpiar vista — planillas ──────────────────────────────────────
     def _limpiar_planillas(self):
@@ -8209,9 +8241,7 @@ class App(ctk.CTk):
         if hasattr(self, 'tree_coordinacion'):
             self.tree_coordinacion.delete(*self.tree_coordinacion.get_children())
         # Resetear a vista tickets
-        self._section_coord.pack_forget()
-        self._section_final.pack_forget()
-        self._section_tickets.pack(fill="both", expand=True, pady=(0, 6))
+        self._switch_tab("tickets")
 
     # ── Coordinación ISO/FLEXI ────────────────────────────────────────
     def _escanear_carpetas_coordinacion(self):
@@ -8434,9 +8464,7 @@ class App(ctk.CTk):
         self._coord_comparaciones = {}
 
         # Mostrar sección coordinación, ocultar otras
-        self._section_tickets.pack_forget()
-        self._section_final.pack_forget()
-        self._section_coord.pack(fill="both", expand=True, pady=(0, 6))
+        self._switch_tab("coord")
 
         ok_count = 0
         diff_count = 0
@@ -8637,7 +8665,6 @@ class App(ctk.CTk):
 
         _build_popup(self.config.get("font_level", 1))
 
-
     def _control_final_switch_toggle(self):
         """Toggle auto mode. Changes btn text hint and persists state."""
         if self._cf_auto_var.get():
@@ -8688,9 +8715,7 @@ class App(ctk.CTk):
             self.progress_carga.start()
 
         # Mostrar sección control final, ocultar otras
-        self._section_tickets.pack_forget()
-        self._section_coord.pack_forget()
-        self._section_final.pack(fill="both", expand=True, pady=(0, 6))
+        self._switch_tab("final")
 
         # Limpiar tree viejo
         for item in self.tree_control_final.get_children():
@@ -8837,9 +8862,7 @@ class App(ctk.CTk):
                 self.progress_carga.start()
 
             # Show control final section
-            self._section_tickets.pack_forget()
-            self._section_coord.pack_forget()
-            self._section_final.pack(fill="both", expand=True, pady=(0, 6))
+            self._switch_tab("final")
 
             for item in self.tree_control_final.get_children():
                 self.tree_control_final.delete(item)
@@ -8938,6 +8961,9 @@ class App(ctk.CTk):
             ocr_method = self.config.get("ocr_method", "api_vision")
             textos_por_pdf = {}
             api_datos_raw = {}
+
+            # Sort by client folder name for grouped display (always, before any processing)
+            tickets_pdf.sort(key=lambda r: os.path.basename(os.path.dirname(r)).split("_")[7].lower() if len(os.path.basename(os.path.dirname(r)).split("_")) > 7 else "")
 
             if ocr_method == "api_vision":
                 api_vision_conf = self.config.get("api_vision", {})
@@ -9069,9 +9095,10 @@ class App(ctk.CTk):
             aduana_por_precinto_all = {**aduana_por_precinto_mic, **aduana_por_precinto_aduana}
 
             # 4. Process each ticket — try terrestre first, then flexi
-            todos_pdfs = set(tickets_pdf)
-            for ruta in todos_pdfs:
+            for ruta in tickets_pdf:
                 stem = os.path.splitext(os.path.basename(ruta))[0]
+                carpeta = os.path.basename(os.path.dirname(ruta))
+                cliente = carpeta.split("_")[7] if len(carpeta.split("_")) > 7 else carpeta
                 try:
                     shared_excel_matches = []
                     modo_result = "flexi"  # default per-ticket
@@ -9244,7 +9271,7 @@ class App(ctk.CTk):
                             if cont_data: break
 
                     result = self._build_fila_control_final(
-                        ticket_data, cont_data, cont_idx, aduana, stem, modo=modo_result,
+                        ticket_data, cont_data, cont_idx, aduana, stem, cliente=cliente, modo=modo_result,
                         shared_excel_matches=shared_excel_matches
                     )
                     if result:
@@ -9266,7 +9293,7 @@ class App(ctk.CTk):
             self._log(f"[Control Final] Finalizado — {rc} ticket(s) procesado(s)")
             self.log_queue.put(("_TAREA_COMPLETA_", None))
 
-    def _build_fila_control_final(self, ticket_data, cont_data, cont_idx, aduana, stem,
+    def _build_fila_control_final(self, ticket_data, cont_data, cont_idx, aduana, stem, cliente="",
                                    modo="flexi", shared_excel_matches=None):
         """Build row values and comparison data for Control Final.
 
@@ -9338,6 +9365,14 @@ class App(ctk.CTk):
         t_dni        = ticket_data.get("DNI", "")
         t_neto       = ticket_data.get("Neto", "")
         t_tara       = ticket_data.get("Tara Contenedor", "")
+        # Normalize ticket OCR values: strip thousand-separator dots
+        # API sometimes returns "24.000" (with dots) instead of "24000"
+        _tmp = str(t_neto).replace(".", "").replace(",", ".")
+        if _tmp.replace(".", "", 1).isdigit():
+            t_neto = _tmp
+        _tmp = str(t_tara).replace(".", "").replace(",", ".")
+        if _tmp.replace(".", "", 1).isdigit():
+            t_tara = _tmp
         t_contenedor = ticket_data.get("Contenedor", "")
         t_permiso    = ticket_data.get("Permiso", "")
         t_dni        = _dni_solo(t_dni)
@@ -9625,11 +9660,11 @@ class App(ctk.CTk):
 
         # Tree row: all values normalized
         valores = (
-            f"📄 {stem}",
+            cliente,
             t_patente,
             t_semi,
             t_conductor,
-            t_dni,
+            self._fmt_dni(t_dni),
             t_neto,
             t_tara,
             t_contenedor,
@@ -9774,6 +9809,11 @@ class App(ctk.CTk):
                 val_ticket = datos["ticket"].get(key_ticket, "")
                 val_cont = datos["contenedor"].get(key_ticket, "")
                 val_aduana = datos["aduana"].get(key_aduana, "—") if key_aduana else "—"
+                # Format DNI with thousand separators: 36987654 -> 36.987.654
+                if campo == "DNI":
+                    val_ticket = self._fmt_dni(val_ticket)
+                    val_cont = self._fmt_dni(val_cont)
+                    val_aduana = self._fmt_dni(val_aduana)
 
                 # Override Neto Excel column for shared trips
                 if is_shared and campo == "Neto (kg)":
@@ -9996,7 +10036,7 @@ class App(ctk.CTk):
                         if f.is_file() and f.name.lower().endswith('.pdf'):
                             if _permiso_pat.match(f.name):
                                 continue
-                            if not f.name.lower().startswith("scan"):
+                            if not (f.name.lower().startswith("scan") or f.name.lower().startswith("escan")):
                                 continue
                             all_pdfs.append(f.path)
                     if carp["excel_path"]:
@@ -10019,7 +10059,7 @@ class App(ctk.CTk):
                     if f.is_file() and f.name.lower().endswith('.pdf'):
                         if _permiso_pat.match(f.name):
                             continue
-                        if not f.name.lower().startswith("scan"):
+                        if not (f.name.lower().startswith("scan") or f.name.lower().startswith("escan")):
                             continue
                         pdfs.append(f.path)
                 if pdfs and carp["excel_path"]:
@@ -10055,9 +10095,7 @@ class App(ctk.CTk):
                 self.progress_carga.start()
 
             # Show tickets section
-            self._section_coord.pack_forget()
-            self._section_final.pack_forget()
-            self._section_tickets.pack(fill="both", expand=True, pady=(0, 6))
+            self._switch_tab("tickets")
 
             # Store groups for serial processing
             self._ct_folder_groups = folder_groups
@@ -10148,9 +10186,7 @@ class App(ctk.CTk):
             self._log("[Control Datos] ⚠ No seleccionaste ningún archivo Excel CONTENEDORES.")
             return
         # Mostrar sección tickets, ocultar otras
-        self._section_coord.pack_forget()
-        self._section_final.pack_forget()
-        self._section_tickets.pack(fill="both", expand=True, pady=(0, 6))
+        self._switch_tab("tickets")
         self._log(f"[Control Datos] Procesando {len(rutas_pdf)} PDFs contra {len(rutas_excel)} Excel(s)...")
         if self.tarea_activa:
             messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
@@ -10495,26 +10531,58 @@ class App(ctk.CTk):
 
     # ── T5b: Lector combinado (una sola apertura) ──────────────────────
     def _leer_wb_completo(self, ruta_wb):
-        """Abre el workbook UNA VEZ y extrae PE + contenedores + camiones.
+        """Abre el workbook UNA VEZ y extrae datos desde Choferes + peso/tara desde DATOS.
 
-        Retorna dict {pe, camiones[], contenedores[]} o None si error.
-        Evita 3 opens separados para PE / DATOS / Choferes.
+        Choferes es la fuente primaria: patente, semi, chofer, DNI, contenedor, precintos, PE.
+        DATOS solo provee peso_carga y tara_cont.
+        Patentes se limpian al leer (sin guiones/espacios).
+
+        Retorna dict {pe, camiones[], contenedores[], precintos[], peso_flexi_global} o None.
         """
         import re as _re
+
+        def _clean_pat(p):
+            """Elimina guiones, espacios y puntuación de patentes."""
+            if not p:
+                return ""
+            return _re.sub(r'[^A-Z0-9]', '', str(p).upper().strip())
+
         pe = None
         contenedores = []
         precintos = []
         camiones = []
-        col_idx = None
         peso_flexi_global = None
 
         try:
             if ruta_wb.lower().endswith('.xlsx'):
                 wb = openpyxl.load_workbook(ruta_wb, read_only=True, data_only=True)
 
-                # ── Hoja Choferes: PE ──
+                # ── Hoja Choferes: fuente primaria ──
                 if 'Choferes' in wb.sheetnames:
                     ws = wb['Choferes']
+
+                    # Detectar columnas por headers
+                    h_cols = {}
+                    for c in range(1, ws.max_column + 1):
+                        v = ws.cell(1, c).value
+                        if v:
+                            h = str(v).upper()
+                            if 'DOMINIO' in h and 'TRACTOR' in h:
+                                h_cols['tractor'] = c
+                            if 'DOMINIO' in h and 'SEMI' in h:
+                                h_cols['semi'] = c
+                            if 'NUMERO' in h and 'CONTENEDOR' in h:
+                                h_cols['contenedor'] = c
+                            if 'NOMBRE' in h and 'CHOFER' in h:
+                                h_cols['chofer'] = c
+                            if 'DNI' in h and 'CHOFER' in h:
+                                h_cols['dni'] = c
+                            if 'PRECINTO' in h and 'ADUANA' in h:
+                                h_cols['precinto'] = c
+                            if 'PRECINTO' in h and 'LINEA' in h:
+                                h_cols['precinto_linea'] = c
+
+                    # Buscar PE
                     for r in range(1, ws.max_row + 1):
                         for c in range(1, ws.max_column + 1):
                             v = ws.cell(r, c).value
@@ -10526,31 +10594,7 @@ class App(ctk.CTk):
                         if pe is not None:
                             break
 
-                    # ── Hoja Choferes: contenedores + precintos ──
-                    col_idx = None
-                    precinto_col = None
-                    for c in range(1, ws.max_column + 1):
-                        v = ws.cell(1, c).value
-                        if v:
-                            h = str(v).upper()
-                            if 'NUMERO' in h and 'CONTENEDOR' in h:
-                                col_idx = c
-                            if 'PRECINTO' in h and 'ADUANA' in h:
-                                precinto_col = c
-                    if col_idx is None:
-                        col_idx = 4
-                    precintos = []
-                    for r in range(2, ws.max_row + 1):
-                        val = ws.cell(r, col_idx).value
-                        contenedores.append(str(val).strip() if val else "")
-                        if precinto_col:
-                            pv = ws.cell(r, precinto_col).value
-                            precintos.append(str(pv).strip() if pv else "")
-                        else:
-                            precintos.append("")
-
-                    # ── Buscar PESO FLEXI como etiqueta (no columna) ──
-                    peso_flexi_global = None
+                    # Buscar PESO FLEXI
                     for r in range(1, ws.max_row + 1):
                         for c in range(1, ws.max_column + 1):
                             v = ws.cell(r, c).value
@@ -10565,16 +10609,65 @@ class App(ctk.CTk):
                         if peso_flexi_global is not None:
                             break
 
-                # ── Hoja DATOS: camiones ──
-                if 'DATOS' in wb.sheetnames:
-                    ws = wb['DATOS']
-                    max_row = ws.max_row or 0
-                    max_col = ws.max_column or 0
+                    # Leer camiones desde filas de Choferes (empieza en fila 2)
+                    for r in range(2, ws.max_row + 1):
+                        tractor_val = ws.cell(r, h_cols.get('tractor', 1)).value if 'tractor' in h_cols else None
+                        if not tractor_val:
+                            break  # Fin de datos de camiones
+                        camion = {"k": len(camiones), "peso_carga": 0, "tara_cont": 0}
+                        if 'tractor' in h_cols:
+                            v = ws.cell(r, h_cols['tractor']).value
+                            camion["patente_camion"] = _clean_pat(v) if v else ""
+                        else:
+                            camion["patente_camion"] = ""
+                        if 'semi' in h_cols:
+                            v = ws.cell(r, h_cols['semi']).value
+                            camion["patente_semi"] = _clean_pat(v) if v else ""
+                        else:
+                            camion["patente_semi"] = ""
+                        if 'contenedor' in h_cols:
+                            v = ws.cell(r, h_cols['contenedor']).value
+                            camion["contenedor"] = str(v).strip() if v else ""
+                        else:
+                            camion["contenedor"] = ""
+                        if 'chofer' in h_cols:
+                            v = ws.cell(r, h_cols['chofer']).value
+                            camion["conductor"] = str(v).strip() if v else ""
+                        else:
+                            camion["conductor"] = ""
+                        if 'dni' in h_cols:
+                            v = ws.cell(r, h_cols['dni']).value
+                            if v is not None:
+                                camion["dni"] = str(int(v)) if isinstance(v, (int, float)) else str(v).strip()
+                            else:
+                                camion["dni"] = ""
+                        else:
+                            camion["dni"] = ""
+                        # Precinto: unir aduana + linea con guion
+                        prec_parts = []
+                        if 'precinto' in h_cols:
+                            pv = ws.cell(r, h_cols['precinto']).value
+                            if pv and str(pv).strip() and str(pv).strip() != '-':
+                                prec_parts.extend(str(pv).strip().replace("-", " ").split())
+                        if 'precinto_linea' in h_cols:
+                            pv = ws.cell(r, h_cols['precinto_linea']).value
+                            if pv and str(pv).strip() and str(pv).strip() != '-':
+                                prec_parts.extend(str(pv).strip().replace("-", " ").split())
+                        camion["precinto"] = "-".join(prec_parts) if prec_parts else ""
+                        contenedores.append(camion["contenedor"])
+                        precintos.append(camion["precinto"])
+                        camiones.append(camion)
+
+                # ── Hoja DATOS: SOLO peso_carga y tara_cont ──
+                if 'DATOS' in wb.sheetnames and camiones:
+                    ws_d = wb['DATOS']
+                    max_row = ws_d.max_row or 0
+                    max_col = ws_d.max_column or 0
 
                     def _celda(row, col):
                         if row > max_row or col > max_col:
                             return None
-                        return ws.cell(row=row, column=col).value
+                        return ws_d.cell(row=row, column=col).value
 
                     def _val_num(raw_val):
                         if raw_val is None:
@@ -10583,92 +10676,39 @@ class App(ctk.CTk):
                             return float(raw_val)
                         return 0
 
-                    # ── Scan dinámico: busca PATENTE CAMION en DATOS ──
-                    bloques = []
+                    # Buscar posiciones de CAMION / PATENTE CAMION en DATOS
+                    camion_positions = []
                     for r in range(1, max_row + 1):
                         for c in range(1, max_col + 1):
                             raw = _celda(r, c)
-                            if raw is not None:
-                                etiqueta = str(raw).strip().upper()
-                                if 'PATENTE' in etiqueta and 'CAMION' in etiqueta:
-                                    if c + 6 <= max_col:
-                                        bloques.append((r, c))
-                    bloques.sort(key=lambda b: (b[0], b[1]))
+                            if raw and isinstance(raw, str):
+                                lbl = raw.strip().upper()
+                                if lbl in ('CAMION', 'PATENTE CAMION'):
+                                    camion_positions.append((r, c))
 
-                    for k, (patente_row, label_col) in enumerate(bloques):
-                        row_base = patente_row - 1
-                        value_col = label_col + 6
-                        patente_camion = str(_celda(patente_row, value_col) or "").strip()
-                        patente_semi   = str(_celda(patente_row + 1, value_col) or "").strip()
-                        conductor_val  = str(_celda(patente_row + 2, value_col) or "").strip()
-                        dni_raw = _celda(patente_row + 3, value_col)
-                        if isinstance(dni_raw, (int, float)):
-                            dni_celda = str(int(dni_raw))
-                        else:
-                            dni_celda = str(dni_raw or "").strip()
-                        peso_carga_num = _val_num(_celda(patente_row + 7, value_col))
-                        tara_cont_num  = _val_num(_celda(patente_row + 8, value_col))
-                        camion = {
-                            "k": k,
-                            "patente_camion": patente_camion,
-                            "patente_semi": patente_semi,
-                            "conductor": conductor_val,
-                            "dni": dni_celda,
-                            "contenedor": "",
-                            "peso_carga": peso_carga_num,
-                            "tara_cont": tara_cont_num,
-                        }
-                        camiones.append(camion)
+                    # Para cada CAMION, buscar PESO CARGA y TARA CONT en filas cercanas
+                    peso_tara_list = []
+                    for cam_row, cam_col in camion_positions:
+                        peso = 0
+                        tara = 0
+                        for offset in range(1, 12):
+                            check_row = cam_row + offset
+                            if check_row > max_row:
+                                break
+                            raw = _celda(check_row, cam_col)
+                            if raw and isinstance(raw, str):
+                                lbl = raw.strip().upper()
+                                if lbl in ('PESO CARGA', 'PESO CARGA (KG)'):
+                                    peso = _val_num(_celda(check_row, cam_col + 6)) if cam_col + 6 <= max_col else 0
+                                elif lbl == 'TARA CONT':
+                                    tara = _val_num(_celda(check_row, cam_col + 6)) if cam_col + 6 <= max_col else 0
+                        peso_tara_list.append((peso, tara))
 
-                    # Merge contenedores
-                    if contenedores:
-                        for i, camion in enumerate(camiones):
-                            if i < len(contenedores) and contenedores[i]:
-                                camion["contenedor"] = contenedores[i]
-                    if precintos:
-                        for i, camion in enumerate(camiones):
-                            if i < len(precintos) and precintos[i]:
-                                # Dividir precintos unidos por guión: "JI49558-JI49559" → "JI49558-JI49559"
-                                partes = [p.strip() for p in precintos[i].replace("-", " ").split() if p.strip()]
-                                camion["precinto"] = "-".join(partes) if partes else ""
-
-                    # ── Fallback Choferes: si DATOS no tiene patente/chofer/DNI ──
-                    if camiones and not camiones[0].get("patente_camion"):
-                        ws_ch = wb['Choferes']
-                        # Detectar columnas por headers
-                        h_cols = {}
-                        for c in range(1, ws_ch.max_column + 1):
-                            v = ws_ch.cell(1, c).value
-                            if v:
-                                h = str(v).upper()
-                                if 'DOMINIO' in h and 'TRACTOR' in h:
-                                    h_cols['tractor'] = c
-                                if 'DOMINIO' in h and 'SEMI' in h:
-                                    h_cols['semi'] = c
-                                if 'NOMBRE' in h and 'CHOFER' in h:
-                                    h_cols['chofer'] = c
-                                if 'DNI' in h and 'CHOFER' in h:
-                                    h_cols['dni'] = c
-                        # Rellenar desde fila 2 de Choferes
-                        for i, camion in enumerate(camiones):
-                            r_ch = i + 2  # fila 2 = primer camión
-                            if r_ch <= ws_ch.max_row:
-                                if not camion.get("patente_camion") and 'tractor' in h_cols:
-                                    v = ws_ch.cell(r_ch, h_cols['tractor']).value
-                                    if v:
-                                        camion["patente_camion"] = str(v).strip()
-                                if not camion.get("patente_semi") and 'semi' in h_cols:
-                                    v = ws_ch.cell(r_ch, h_cols['semi']).value
-                                    if v:
-                                        camion["patente_semi"] = str(v).strip()
-                                if not camion.get("conductor") and 'chofer' in h_cols:
-                                    v = ws_ch.cell(r_ch, h_cols['chofer']).value
-                                    if v:
-                                        camion["conductor"] = str(v).strip()
-                                if not camion.get("dni") and 'dni' in h_cols:
-                                    v = ws_ch.cell(r_ch, h_cols['dni']).value
-                                    if v is not None:
-                                        camion["dni"] = str(int(v)) if isinstance(v, (int, float)) else str(v).strip()
+                    # Asignar peso/tara a camiones por orden
+                    for i, camion in enumerate(camiones):
+                        if i < len(peso_tara_list):
+                            camion["peso_carga"] = peso_tara_list[i][0]
+                            camion["tara_cont"] = peso_tara_list[i][1]
 
                 wb.close()
 
@@ -10676,8 +10716,32 @@ class App(ctk.CTk):
                 # .xls con xlrd
                 book = xlrd.open_workbook(ruta_wb)
 
+                # ── Hoja Choferes: fuente primaria ──
                 if 'Choferes' in book.sheet_names():
                     ws = book.sheet_by_name('Choferes')
+
+                    # Detectar columnas por headers (row 0 en xlrd)
+                    h_cols = {}
+                    for c in range(ws.ncols):
+                        v = ws.cell_value(0, c)
+                        if v:
+                            h = str(v).upper()
+                            if 'DOMINIO' in h and 'TRACTOR' in h:
+                                h_cols['tractor'] = c
+                            if 'DOMINIO' in h and 'SEMI' in h:
+                                h_cols['semi'] = c
+                            if 'NUMERO' in h and 'CONTENEDOR' in h:
+                                h_cols['contenedor'] = c
+                            if 'NOMBRE' in h and 'CHOFER' in h:
+                                h_cols['chofer'] = c
+                            if 'DNI' in h and 'CHOFER' in h:
+                                h_cols['dni'] = c
+                            if 'PRECINTO' in h and 'ADUANA' in h:
+                                h_cols['precinto'] = c
+                            if 'PRECINTO' in h and 'LINEA' in h:
+                                h_cols['precinto_linea'] = c
+
+                    # Buscar PE
                     for r in range(ws.nrows):
                         for c in range(ws.ncols):
                             v = ws.cell_value(r, c)
@@ -10689,30 +10753,7 @@ class App(ctk.CTk):
                         if pe is not None:
                             break
 
-                    col_idx = None
-                    precinto_col = None
-                    for c in range(ws.ncols):
-                        v = ws.cell_value(0, c)
-                        if v:
-                            h = str(v).upper()
-                            if 'NUMERO' in h and 'CONTENEDOR' in h:
-                                col_idx = c
-                            if 'PRECINTO' in h and 'ADUANA' in h:
-                                precinto_col = c
-                    if col_idx is None:
-                        col_idx = 3
-                    precintos = []
-                    for r in range(1, ws.nrows):
-                        val = ws.cell_value(r, col_idx)
-                        contenedores.append(str(val).strip() if val else "")
-                        if precinto_col is not None:
-                            pv = ws.cell_value(r, precinto_col)
-                            precintos.append(str(pv).strip() if pv else "")
-                        else:
-                            precintos.append("")
-
-                    # ── Buscar PESO FLEXI como etiqueta (no columna) ──
-                    peso_flexi_global = None
+                    # Buscar PESO FLEXI
                     for r in range(ws.nrows):
                         for c in range(ws.ncols):
                             v = ws.cell_value(r, c)
@@ -10727,15 +10768,65 @@ class App(ctk.CTk):
                         if peso_flexi_global is not None:
                             break
 
-                if 'DATOS' in book.sheet_names():
-                    ws = book.sheet_by_name('DATOS')
-                    max_row = ws.nrows
-                    max_col = ws.ncols
+                    # Leer camiones desde filas de Choferes (empieza en row 1 en xlrd)
+                    for r in range(1, ws.nrows):
+                        tractor_val = ws.cell_value(r, h_cols.get('tractor', 0)) if 'tractor' in h_cols else None
+                        if not tractor_val:
+                            break  # Fin de datos de camiones
+                        camion = {"k": len(camiones), "peso_carga": 0, "tara_cont": 0}
+                        if 'tractor' in h_cols:
+                            v = ws.cell_value(r, h_cols['tractor'])
+                            camion["patente_camion"] = _clean_pat(v) if v else ""
+                        else:
+                            camion["patente_camion"] = ""
+                        if 'semi' in h_cols:
+                            v = ws.cell_value(r, h_cols['semi'])
+                            camion["patente_semi"] = _clean_pat(v) if v else ""
+                        else:
+                            camion["patente_semi"] = ""
+                        if 'contenedor' in h_cols:
+                            v = ws.cell_value(r, h_cols['contenedor'])
+                            camion["contenedor"] = str(v).strip() if v else ""
+                        else:
+                            camion["contenedor"] = ""
+                        if 'chofer' in h_cols:
+                            v = ws.cell_value(r, h_cols['chofer'])
+                            camion["conductor"] = str(v).strip() if v else ""
+                        else:
+                            camion["conductor"] = ""
+                        if 'dni' in h_cols:
+                            v = ws.cell_value(r, h_cols['dni'])
+                            if v is not None:
+                                camion["dni"] = str(int(v)) if isinstance(v, float) and v == int(v) else str(v).strip()
+                            else:
+                                camion["dni"] = ""
+                        else:
+                            camion["dni"] = ""
+                        # Precinto
+                        prec_parts = []
+                        if 'precinto' in h_cols:
+                            pv = ws.cell_value(r, h_cols['precinto'])
+                            if pv and str(pv).strip() and str(pv).strip() != '-':
+                                prec_parts.extend(str(pv).strip().replace("-", " ").split())
+                        if 'precinto_linea' in h_cols:
+                            pv = ws.cell_value(r, h_cols['precinto_linea'])
+                            if pv and str(pv).strip() and str(pv).strip() != '-':
+                                prec_parts.extend(str(pv).strip().replace("-", " ").split())
+                        camion["precinto"] = "-".join(prec_parts) if prec_parts else ""
+                        contenedores.append(camion["contenedor"])
+                        precintos.append(camion["precinto"])
+                        camiones.append(camion)
+
+                # ── Hoja DATOS: SOLO peso_carga y tara_cont ──
+                if 'DATOS' in book.sheet_names() and camiones:
+                    ws_d = book.sheet_by_name('DATOS')
+                    max_row = ws_d.nrows
+                    max_col = ws_d.ncols
 
                     def _celda(row, col):
                         if row > max_row or col > max_col:
                             return None
-                        return ws.cell_value(row - 1, col - 1)
+                        return ws_d.cell_value(row - 1, col - 1)
 
                     def _val_num(raw_val):
                         if raw_val is None:
@@ -10744,89 +10835,36 @@ class App(ctk.CTk):
                             return float(raw_val)
                         return 0
 
-                    # ── Scan dinámico: busca PATENTE CAMION en DATOS ──
-                    bloques = []
+                    camion_positions = []
                     for r in range(1, max_row + 1):
-                        for c in range(1, max_col + 1):
+                        for c in range(0, max_col):
                             raw = _celda(r, c)
                             if raw is not None:
-                                etiqueta = str(raw).strip().upper()
-                                if 'PATENTE' in etiqueta and 'CAMION' in etiqueta:
-                                    if c + 6 <= max_col:
-                                        bloques.append((r, c))
-                    bloques.sort(key=lambda b: (b[0], b[1]))
+                                lbl = str(raw).strip().upper()
+                                if lbl in ('CAMION', 'PATENTE CAMION'):
+                                    camion_positions.append((r, c))
 
-                    for k, (patente_row, label_col) in enumerate(bloques):
-                        row_base = patente_row - 1
-                        value_col = label_col + 6
-                        patente_camion = str(_celda(patente_row, value_col) or "").strip()
-                        patente_semi   = str(_celda(patente_row + 1, value_col) or "").strip()
-                        conductor_val  = str(_celda(patente_row + 2, value_col) or "").strip()
-                        dni_raw = _celda(patente_row + 3, value_col)
-                        if isinstance(dni_raw, (int, float)):
-                            dni_celda = str(int(dni_raw))
-                        else:
-                            dni_celda = str(dni_raw or "").strip()
-                        peso_carga_num = _val_num(_celda(patente_row + 7, value_col))
-                        tara_cont_num  = _val_num(_celda(patente_row + 8, value_col))
-                        camion = {
-                            "k": k,
-                            "patente_camion": patente_camion,
-                            "patente_semi": patente_semi,
-                            "conductor": conductor_val,
-                            "dni": dni_celda,
-                            "contenedor": "",
-                            "peso_carga": peso_carga_num,
-                            "tara_cont": tara_cont_num,
-                        }
-                        camiones.append(camion)
+                    peso_tara_list = []
+                    for cam_row, cam_col in camion_positions:
+                        peso = 0
+                        tara = 0
+                        for offset in range(1, 12):
+                            check_row = cam_row + offset
+                            if check_row > max_row:
+                                break
+                            raw = _celda(check_row, cam_col)
+                            if raw is not None:
+                                lbl = str(raw).strip().upper()
+                                if lbl in ('PESO CARGA', 'PESO CARGA (KG)'):
+                                    peso = _val_num(_celda(check_row, cam_col + 6)) if cam_col + 6 < max_col else 0
+                                elif lbl == 'TARA CONT':
+                                    tara = _val_num(_celda(check_row, cam_col + 6)) if cam_col + 6 < max_col else 0
+                        peso_tara_list.append((peso, tara))
 
-                    if contenedores:
-                        for i, camion in enumerate(camiones):
-                            if i < len(contenedores) and contenedores[i]:
-                                camion["contenedor"] = contenedores[i]
-                    if precintos:
-                        for i, camion in enumerate(camiones):
-                            if i < len(precintos) and precintos[i]:
-                                # Dividir precintos unidos por guión: "JI49558-JI49559" → "JI49558-JI49559"
-                                partes = [p.strip() for p in precintos[i].replace("-", " ").split() if p.strip()]
-                                camion["precinto"] = "-".join(partes) if partes else ""
-
-                    # ── Fallback Choferes: si DATOS no tiene patente/chofer/DNI ──
-                    if camiones and not camiones[0].get("patente_camion"):
-                        ws_ch = book.sheet_by_name('Choferes')
-                        h_cols = {}
-                        for c in range(ws_ch.ncols):
-                            v = ws_ch.cell_value(0, c)
-                            if v:
-                                h = str(v).upper()
-                                if 'DOMINIO' in h and 'TRACTOR' in h:
-                                    h_cols['tractor'] = c
-                                if 'DOMINIO' in h and 'SEMI' in h:
-                                    h_cols['semi'] = c
-                                if 'NOMBRE' in h and 'CHOFER' in h:
-                                    h_cols['chofer'] = c
-                                if 'DNI' in h and 'CHOFER' in h:
-                                    h_cols['dni'] = c
-                        for i, camion in enumerate(camiones):
-                            r_ch = i + 1  # xlrd: row 1 = primer dato
-                            if r_ch < ws_ch.nrows:
-                                if not camion.get("patente_camion") and 'tractor' in h_cols:
-                                    v = ws_ch.cell_value(r_ch, h_cols['tractor'])
-                                    if v:
-                                        camion["patente_camion"] = str(v).strip()
-                                if not camion.get("patente_semi") and 'semi' in h_cols:
-                                    v = ws_ch.cell_value(r_ch, h_cols['semi'])
-                                    if v:
-                                        camion["patente_semi"] = str(v).strip()
-                                if not camion.get("conductor") and 'chofer' in h_cols:
-                                    v = ws_ch.cell_value(r_ch, h_cols['chofer'])
-                                    if v:
-                                        camion["conductor"] = str(v).strip()
-                                if not camion.get("dni") and 'dni' in h_cols:
-                                    v = ws_ch.cell_value(r_ch, h_cols['dni'])
-                                    if v is not None:
-                                        camion["dni"] = str(int(v)) if isinstance(v, float) and v == int(v) else str(v).strip()
+                    for i, camion in enumerate(camiones):
+                        if i < len(peso_tara_list):
+                            camion["peso_carga"] = peso_tara_list[i][0]
+                            camion["tara_cont"] = peso_tara_list[i][1]
 
         except Exception as ex:
             self.log_queue.put((self._log_warning,
@@ -11056,6 +11094,8 @@ class App(ctk.CTk):
                     self.log_queue.put(f"[{timestamp}] [Control Datos] API Visión secuencial: {total} PDF(s), {len(all_models)} modelo(s) disponible(s)")
                     for i, ruta in enumerate(rutas):
                         stem = os.path.splitext(os.path.basename(ruta))[0]
+                        carpeta = os.path.basename(os.path.dirname(ruta))
+                        cliente = carpeta.split("_")[7] if len(carpeta.split("_")) > 7 else carpeta
                         self.log_queue.put(f"[{timestamp}] [Control Datos]   [{i+1}/{total}] {stem}")
                         success = False
                         for m in all_models:
@@ -11148,8 +11188,8 @@ class App(ctk.CTk):
                 "permiso": permiso,
             }
 
-            # Match CONTENEDOR — primero por patente/semi/DNI (rápido),
-            # luego fallback por permiso (PE suffix)
+            # Match CONTENEDOR — buscar por patente/semi/DNI en cache
+            # Patentes en cache ya están limpias (sin guiones/espacios)
             ruta_match = None
             cont_data = None
             pe_val = None
@@ -11157,18 +11197,17 @@ class App(ctk.CTk):
             sn = _normalizar_simple(semi)
             dn = _re.sub(r'\D', '', str(dni).strip())
 
-            # ── Fast path: buscar por patente/semi/DNI en cache ──
-            # For shared trips (compartido), find ALL matching Excels
-            all_matches = []  # [(ruta, data, camion)] — all Excels matching this truck
-            shared_excels = []  # [{ruta, nombre, data}] — for shared trips
+            # ── Buscar por patente/semi/DNI en cache ──
+            all_matches = []  # [(ruta, data, camion)]
+            shared_excels = []
             shared_neto_sum = 0
             if self._contenedores_cache:
                 for ruta, data in self._contenedores_cache.items():
                     if not data or not data.get("camiones"):
                         continue
                     for camion in data["camiones"]:
-                        cp = _normalizar_simple(camion.get("patente_camion", ""))
-                        cs = _normalizar_simple(camion.get("patente_semi", ""))
+                        cp = camion.get("patente_camion", "")  # ya limpio en cache
+                        cs = camion.get("patente_semi", "")    # ya limpio en cache
                         cdn = _re.sub(r'\D', '', str(camion.get("dni", "")).strip())
                         if (pn and cp and pn == cp) or \
                            (sn and cs and sn == cs) or \
@@ -11179,22 +11218,19 @@ class App(ctk.CTk):
             if all_matches:
                 ruta_match = all_matches[0][0]
                 cont_data = all_matches[0][1]
-                pe_val = self._leer_pe_choferes(ruta_match)
+                pe_val = data.get("pe")  # ya leído en cache
 
                 if len(all_matches) > 1:
-                    # Shared trip: build shared_excels list with individual Neto
                     for ruta, data, camion in all_matches:
                         carpeta = os.path.basename(os.path.dirname(ruta))
-                        ex_pe = self._leer_pe_choferes(ruta)
                         shared_excels.append({
                             "ruta": ruta,
                             "nombre": carpeta,
                             "data": data,
                             "camion": camion,
-                            "pe": ex_pe,
+                            "pe": data.get("pe"),
                         })
                         shared_neto_sum += camion.get("peso_carga", 0)
-                    # Keep cont_data as first Excel (backward compat)
                     self.log_queue.put(
                         f"[MATCH] ✅ Fast compartido: patente '{patente}' "
                         f"-> {len(all_matches)} Excels, Neto total: {shared_neto_sum} kg")
@@ -11202,23 +11238,11 @@ class App(ctk.CTk):
                     self.log_queue.put(
                         f"[MATCH] ✅ Fast: patente '{patente}' -> {os.path.basename(ruta_match)}")
 
-            # ── Fallback: buscar por permiso (PE suffix) ──
-            if not ruta_match:
-                rutas_match = self._match_contenedor(permiso)
-                for ruta_cand in rutas_match:
-                    cd = self._leer_datos_contenedor(ruta_cand)
-                    cv = self._leer_pe_choferes(ruta_cand)
-                    if cd and cd.get("camiones"):
-                        ruta_match = ruta_cand
-                        cont_data = cd
-                        pe_val = cv
-                        self.log_queue.put(
-                            f"[MATCH] ✅ Fallback permiso: '{permiso}' -> {os.path.basename(ruta_cand)}")
-                        break
-
             return ticket_data, cont_data, ruta_match, pe_val, permiso, shared_excels, shared_neto_sum
 
         # ── 3. Procesar resultados y enviarlos a la UI ──
+        # Sort by parent folder for grouped display
+        rutas.sort(key=lambda r: os.path.basename(os.path.dirname(r)).split("_")[7].lower() if len(os.path.basename(os.path.dirname(r)).split("_")) > 7 else "")
         for hechos, ruta in enumerate(rutas, start=1):
             stem = os.path.splitext(os.path.basename(ruta))[0]
             has_data = stem in api_datos_raw or stem in textos_por_pdf
@@ -11246,6 +11270,8 @@ class App(ctk.CTk):
                     "contenedor": cont_data,
                     "match": ruta_match,
                     "pe": pe_val,
+                    "carpeta": os.path.basename(os.path.dirname(ruta)),
+                    "cliente": os.path.basename(os.path.dirname(ruta)).split("_")[7] if len(os.path.basename(os.path.dirname(ruta)).split("_")) > 7 else "",
                     "shared_excels": shared_excels,
                     "shared_neto_sum": shared_neto_sum,
                 }))
@@ -12374,6 +12400,28 @@ class App(ctk.CTk):
                     col: self._mail_tree.column(col, "width")
                     for col in ("sel", "asunto", "fecha", "adjuntos", "carpeta")
                 }
+            # Guardar anchos de columna de Control de Tickets
+            if hasattr(self, 'tree_carga') and self.tree_carga.winfo_exists():
+                self.config["tree_carga_columns"] = {
+                    col: self.tree_carga.column(col, "width")
+                    for col in ("cliente", "camion", "semi", "conductor", "dni",
+                                "neto", "tara", "contenedor", "permiso", "estado")
+                }
+            # Guardar anchos de columna de Coordinacion
+            if hasattr(self, 'tree_coordinacion') and self.tree_coordinacion.winfo_exists():
+                self.config["tree_coordinacion_columns"] = {
+                    col: self.tree_coordinacion.column(col, "width")
+                    for col in ("carpeta", "giro", "cliente", "destino",
+                                "buque", "viaje", "booking", "pto_descarga", "pto_final",
+                                "fecha_of_pe", "fecha_carga", "peso_flexi", "estado")
+                }
+            # Guardar anchos de columna de Control Final
+            if hasattr(self, 'tree_control_final') and self.tree_control_final.winfo_exists():
+                self.config["tree_control_final_columns"] = {
+                    col: self.tree_control_final.column(col, "width")
+                    for col in ("cliente", "camion", "semi", "conductor", "dni",
+                                "neto", "tara", "contenedor", "permiso", "estado", "salida_aduana")
+                }
             with open(self.config_file, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2)
         except Exception as e:
@@ -12442,7 +12490,6 @@ class App(ctk.CTk):
             return
         self._guardar_config()
         self.destroy()
-
 
 # ── Punto de entrada ─────────────────────────────────────────────────────
 def main():
