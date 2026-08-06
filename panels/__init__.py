@@ -11,8 +11,10 @@ from .correos_mixin import CorreosMixin
 from .descarga_mixin import DescargaMixin
 from .superauto_mixin import SuperAutoMixin
 from .backup_mixin import BackupMixin
+from .control_mixin import ControlMixin
+from .ajustes_mixin import AjustesMixin
 
 __all__ = [
     "ImpresionMixin", "PlanillasMixin", "CorreosMixin", "DescargaMixin",
-    "SuperAutoMixin", "BackupMixin",
+    "SuperAutoMixin", "BackupMixin", "ControlMixin", "AjustesMixin",
 ]
