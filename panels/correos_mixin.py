@@ -20,6 +20,7 @@ from tkinter import ttk, messagebox
 
 from constants import Palette, FONT_FAMILY, IMAP_SERVER, PUERTO_IMAP
 from constants import DESTINATARIOS_GRUPAL, DESTINATARIOS_INDIVIDUAL
+from utils import adjuntar_archivo, buscar_archivo_en_pendrive
 
 
 class CorreosMixin:
