@@ -108,7 +108,7 @@ cp .env.example .env
 #   python -c "import secrets; print(secrets.token_hex(32))"
 
 # 4. Ejecutar
-python ui_app.py
+python app.py
 ```
 
 > En la primera ejecución la aplicación intenta instalar las dependencias de la interfaz automáticamente.
@@ -130,7 +130,8 @@ El ejecutable se genera en `dist/`. Incluir junto al `.exe` las carpetas `engine
 ## Estructura del proyecto
 
 ```
-├── ui_app.py               # Interfaz principal (CustomTkinter) y orquestación de agentes
+├── app.py                   # Interfaz principal (CustomTkinter), ventana y orquestación de agentes
+├── panels/                  # Mixins de cada panel: impresión, planillas, descarga, correos, backup, control, ajustes
 ├── procesar_tickets.py     # Motor de OCR de tickets de pesaje y comparación de datos
 ├── constants/              # Paleta de colores, fuentes y valores por defecto
 ├── utils/                  # Utilidades (email, Excel, pendrive)

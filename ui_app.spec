@@ -4,7 +4,7 @@
 block_cipher = None
 
 a = Analysis(
-    ['ui_app.py'],
+    ['app.py'],
     pathex=['.'],
     binaries=[],
     datas=[
@@ -19,6 +19,7 @@ a = Analysis(
         # Módulos internos
         ('constants', 'constants'),
         ('utils', 'utils'),
+        ('panels', 'panels'),
         ('engines', 'engines'),
         # Poppler (pdf2image)
         ('poppler', 'poppler'),

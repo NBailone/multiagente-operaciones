@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['ui_app.py'],
+    ['app.py'],
     pathex=[],
     binaries=[],
     datas=[('DORSO MIC.pdf', '.'), ('DORSO CRT.pdf', '.'), ('dorso PE.pdf', '.')],
@@ -17,6 +17,9 @@ a = Analysis(
 a.datas += Tree('engines\\tesseract', 'engines/tesseract')
 a.datas += Tree('engines\\paddleocr', 'engines/paddleocr')
 a.datas += Tree('poppler', 'poppler')
+a.datas += Tree('constants', 'constants')
+a.datas += Tree('utils', 'utils')
+a.datas += Tree('panels', 'panels')
 pyz = PYZ(a.pure)
 
 exe = EXE(
