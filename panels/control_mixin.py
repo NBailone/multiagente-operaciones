@@ -42,7 +42,7 @@ class ControlMixin:
         errores_dep = []
 
         # ── Configurar rutas de binarios ──────────────────────────
-        _app_base = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+        _app_base = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         _res_base = getattr(sys, '_MEIPASS', _app_base)
         _POPPLER_BIN = os.path.join(_res_base, "poppler", "Library", "bin")
         _TESSERACT_EXE = os.path.join(_res_base, "engines", "tesseract", "tesseract.exe")
@@ -52,7 +52,7 @@ class ControlMixin:
         # Verificar Tesseract (solo archivo, sin ejecutarlo — evita ventana DOS)
         import pytesseract
         tesseract_sidecar = os.path.join(
-            getattr(sys, '_MEIPASS', os.path.dirname(__file__)),
+            getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "engines", "tesseract", "tesseract.exe")
         tesseract_paths = [
             tesseract_sidecar,

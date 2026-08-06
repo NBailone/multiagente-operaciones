@@ -10,7 +10,7 @@ _panel_frames, panel_container, tarea_activa, datos_planillas, log_queue).
 
 import os
 import re
-import copy
+from copy import copy
 import string
 import threading
 import time

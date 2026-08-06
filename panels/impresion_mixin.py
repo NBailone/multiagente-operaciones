@@ -524,7 +524,7 @@ class ImpresionMixin:
         entry_pe = _crear_fila("Dorso PE", var_pe, def_pe)
 
         def _imprimir_dorsos():
-            base = getattr(sys, '_MEIPASS', os.path.dirname(__file__))
+            base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             archivos = {
                 "MIC": os.path.join(base, "DORSO MIC.pdf"),
                 "CRT": os.path.join(base, "DORSO CRT.pdf"),

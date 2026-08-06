@@ -15,6 +15,8 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from concurrent.futures import ThreadPoolExecutor
+
 import customtkinter as ctk
 from tkinter import ttk, messagebox
 
