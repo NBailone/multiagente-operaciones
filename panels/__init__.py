@@ -9,5 +9,10 @@ from .impresion_mixin import ImpresionMixin
 from .planillas_mixin import PlanillasMixin
 from .correos_mixin import CorreosMixin
 from .descarga_mixin import DescargaMixin
+from .superauto_mixin import SuperAutoMixin
+from .backup_mixin import BackupMixin
 
-__all__ = ["ImpresionMixin", "PlanillasMixin", "CorreosMixin", "DescargaMixin"]
+__all__ = [
+    "ImpresionMixin", "PlanillasMixin", "CorreosMixin", "DescargaMixin",
+    "SuperAutoMixin", "BackupMixin",
+]
