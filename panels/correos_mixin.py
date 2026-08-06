@@ -18,7 +18,8 @@ from email.mime.text import MIMEText
 import customtkinter as ctk
 from tkinter import ttk, messagebox
 
-from constants import Palette, FONT_FAMILY
+from constants import Palette, FONT_FAMILY, IMAP_SERVER, PUERTO_IMAP
+from constants import DESTINATARIOS_GRUPAL, DESTINATARIOS_INDIVIDUAL
 
 
 class CorreosMixin:

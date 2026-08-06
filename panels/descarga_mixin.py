@@ -21,7 +21,7 @@ from datetime import datetime
 import customtkinter as ctk
 from tkinter import ttk, messagebox
 
-from constants import Palette, FONT_FAMILY
+from constants import Palette, FONT_FAMILY, IMAP_SERVER, PUERTO_IMAP
 
 
 class DescargaMixin:
