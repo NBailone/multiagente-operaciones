@@ -2734,7 +2734,8 @@ class App(ctk.CTk):
         if solo_papeles:
             if not asunto.lower().startswith("papeles"):
                 return
-            if "correo" not in remitente.lower():
+            remitente_papeles = self._cfg_obtener_correo("remitente_papeles", "")
+            if remitente_papeles and remitente_papeles.lower() not in remitente.lower():
                 return
         match_date = re.search(r"Date:\s*(.+)", header, re.IGNORECASE)
         fecha_str = match_date.group(1).strip() if match_date else ""
@@ -11586,6 +11587,8 @@ class App(ctk.CTk):
             parent, "Servidor IMAP:", self._cfg_obtener_correo("imap_server", IMAP_SERVER), width=280)
         self._ent_correo_puerto = self._ajustes_row(
             parent, "Puerto IMAP:", str(self._cfg_obtener_correo("imap_puerto", PUERTO_IMAP)), width=80)
+        self._sent_correo_remitente_papeles = self._ajustes_row(
+            parent, "Remitente Papeles (filtro):", self._cfg_obtener_correo("remitente_papeles", ""), width=280)
 
         self._ajustes_seccion(parent, "Destinatarios — Planillas de Carga")
         default_grupal = "\n".join(self._cfg_obtener_correo("destinatarios_grupal", DESTINATARIOS_GRUPAL))
@@ -12217,6 +12220,7 @@ class App(ctk.CTk):
             correo_cfg = {}
             for attr, cfg_key in [('_ent_correo_usuario', 'usuario'), ('_ent_correo_password', 'password'),
                                   ('_ent_correo_imap', 'imap_server'), ('_ent_correo_puerto', 'imap_puerto'),
+                                  ('_sent_correo_remitente_papeles', 'remitente_papeles'),
                                   ('_ent_remitente_balanza', 'remitente_balanza')]:
                 w = _g(attr)
                 if w is not None:

@@ -1853,7 +1853,6 @@ Si un campo no se ve, dejalo como string vacío. No inventes datos."""
 
     # Headers específicos de OpenRouter
     if "openrouter" in api_base.lower():
-        headers["HTTP-Referer"] = "https://github.com/usuario/Multiagente"
         headers["X-Title"] = "Multiagente Control de Datos"
 
     payload = {

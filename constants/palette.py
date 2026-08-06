@@ -1,25 +1,28 @@
 """
-Paleta de colores, fuentes y credenciales por defecto del sistema.
+Paleta de colores, fuentes y configuración por defecto del sistema.
 Extraído de ui_app.py — Paso 1 de la refactorización modular.
+
+Los valores de correo/servidor son placeholders de ejemplo; la
+configuración real se carga desde ui_config.json (encriptada).
 """
 
-# ── Credenciales y configuración por defecto ────────────────────────────────
+# ── Configuración de correo por defecto ────────────────────────────────────
 IMAP_SERVER = "imap.empresa.com"
 PUERTO_IMAP = 143
 
 DESTINATARIOS_GRUPAL = [
-    "usuario@empresa.com", "usuario@empresa.com",
-    "usuario@empresa.com", "usuario@empresa.com",
-    "usuario@empresa.com", "usuario@empresa.com",
-    "usuario@empresa.com", "usuario@empresa.com",
-    "usuario@empresa.com", "usuario@empresa.com",
-    "usuario@empresa.com", "usuario@empresa.com",
-    "usuario@empresa.com", "usuario@empresa.com",
+    "operaciones@empresa.com", "logistica@empresa.com",
+    "despachos@empresa.com", "clientea@cliente-a.com",
+    "clientea2@cliente-a.com", "clientea3@cliente-a.com",
+    "clienteb@cliente-b.com", "clienteb2@cliente-b.com",
+    "clienteb3@cliente-b.com", "clientea4@cliente-a.com",
+    "clientec@cliente-c.com", "clienteb4@cliente-b.com",
+    "clientea5@cliente-a.com", "clientec2@cliente-c.com",
 ]
 DESTINATARIOS_INDIVIDUAL = [
-    "usuario@empresa.com",
-    "usuario@empresa.com",
-    "usuario@empresa.com",
+    "operaciones@empresa.com",
+    "despachos@empresa.com",
+    "logistica@empresa.com",
 ]
 
 # ── Paleta de Colores Profesional ───────────────────────────────────────────
