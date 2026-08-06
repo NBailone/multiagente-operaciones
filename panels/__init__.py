@@ -7,5 +7,7 @@ and rely on the shared attributes/methods living on the composed instance.
 
 from .impresion_mixin import ImpresionMixin
 from .planillas_mixin import PlanillasMixin
+from .correos_mixin import CorreosMixin
+from .descarga_mixin import DescargaMixin
 
-__all__ = ["ImpresionMixin", "PlanillasMixin"]
+__all__ = ["ImpresionMixin", "PlanillasMixin", "CorreosMixin", "DescargaMixin"]
