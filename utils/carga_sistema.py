@@ -402,10 +402,10 @@ def generar_carga_sistema(ruta_carpeta, log=None):
         return c
 
     def celda_cabecera(fila, letra, val, alineacion):
-        """Etiqueta/valor de cabecera (filas 1-3): negrita + alineacion fija."""
+        """Etiqueta/valor de cabecera (filas 1-3): negrita tamano 12 + alineacion fija."""
         c = ws[f"{letra}{fila}"]
         c.value = val
-        c.font = fuente_bold
+        c.font = Font(name="Arial Narrow", size=12, bold=True)
         c.alignment = alineacion
         return c
 
@@ -413,7 +413,7 @@ def generar_carga_sistema(ruta_carpeta, log=None):
     # Etiqueta en A (negrita, izquierda) — valor en B (negrita, derecha)
     celda_cabecera(1, "A", "Fecha Carga", izq)
     c_b1 = ws["B1"]
-    c_b1.font = fuente_bold
+    c_b1.font = Font(name="Arial Narrow", size=12, bold=True)
     c_b1.alignment = der
     if fecha_carga_dt is not None:
         c_b1.value = fecha_carga_dt
