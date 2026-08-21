@@ -183,6 +183,19 @@ class DescargaMixin:
         )
         self._mail_btn_descargar_sel.pack(side="left", padx=4, pady=5)
 
+        # Botón nuevo: descarga los adjuntos PDF de los mails marcados como
+        # archivos sueltos Escaneos\Scan1.pdf, Scan2.pdf... (numeración continua)
+        self._mail_btn_descargar_tickets = ctk.CTkButton(
+            self._mail_row2,
+            text="Descargar Tickets",
+            image=self._icons["cloud-download"], compound="left",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12, weight="bold"),
+            fg_color=Palette.SECONDARY, hover_color=Palette.SECONDARY_HOVER,
+            text_color=Palette.WHITE, corner_radius=6, height=30, width=160,
+            command=self._mail_tickets_seleccionados,
+        )
+        self._mail_btn_descargar_tickets.pack(side="left", padx=4, pady=5)
+
         # Contenedor para "Mail sin filtros" en fila 2 (se muestra/oculta dinámicamente)
         self._mail_ultimos_container = ctk.CTkFrame(self._mail_row2, fg_color="transparent")
         # No se packea aquí — se gestiona por _mail_on_resize
@@ -804,6 +817,109 @@ class DescargaMixin:
         finally:
             self.after(0, lambda: self._mail_done(resultados, modo=3))
 
+    # ── Descargar Tickets: adjuntos sueltos en Escritorio\Escaneos\ScanN ──
+
+    def _mail_siguiente_scan(self, carpeta_escaneos):
+        """Devuelve el próximo número ScanN libre según los archivos existentes."""
+        import re
+        max_n = 0
+        if os.path.isdir(carpeta_escaneos):
+            for f in os.listdir(carpeta_escaneos):
+                m = re.match(r"^Scan(\d+)", f)
+                if m:
+                    max_n = max(max_n, int(m.group(1)))
+        return max_n + 1
+
+    def _mail_tickets_seleccionados(self):
+        """Descarga los adjuntos de los mails marcados como Escaneos/ScanN.ext."""
+        if self.tarea_activa:
+            messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución.")
+            return
+        items = [i for i, d in self._mail_data.items() if d.get("checked") and not d.get("downloaded")]
+        if not items:
+            messagebox.showwarning("Sin selección", "Marcá al menos un mail (☑) para descargar.\n\nClick en la columna ✓ para marcar/desmarcar.")
+            return
+        self.tarea_activa = True
+        self._mail_btn_buscar.configure(state="disabled")
+        self._mail_btn_buscar_reglas.configure(state="disabled")
+        self._mail_btn_ultimos.configure(state="disabled")
+        self._mail_btn_descargar_sel.configure(state="disabled")
+        self._mail_btn_descargar_tickets.configure(text="⏳  Descargando...", state="disabled")
+        self._mail_progress.configure(mode="indeterminate")
+        self._mail_progress.start()
+        self._mail_lbl_estado.configure(text=f"Descargando tickets de {len(items)} mail(s)...")
+        self._limpiar_log()
+        t = threading.Thread(target=self._mail_tickets_worker, args=(items,), daemon=True)
+        t.start()
+
+    def _mail_tickets_worker(self, items_a_descargar):
+        self._set_log_panel("descargar")
+        resultados = []
+        try:
+            self._log(f"Conectando a {self._cfg_obtener_correo('imap_server', IMAP_SERVER)}...")
+            try:
+                mail = self._imap_conectar()
+            except Exception as e:
+                self._log(f"ERROR: No se pudo conectar al servidor IMAP: {e}")
+                return
+            escritorio = self._resolver_ruta("descarga_mails", "Desktop")
+            carpeta_escaneos = os.path.join(escritorio, "Escaneos")
+            os.makedirs(carpeta_escaneos, exist_ok=True)
+            n_scan = self._mail_siguiente_scan(carpeta_escaneos)
+            import email as em_mod
+            for item in items_a_descargar:
+                data = self._mail_data[item]
+                mid = data["mid"]
+                asunto = data["asunto"]
+                self._log(f"  Descargando: {asunto[:80]}")
+                status, resp = mail.fetch(mid, "(BODY[])")
+                if status != "OK":
+                    self._log(f"     ⚠ Error al obtener el mail")
+                    continue
+                raw_email = resp[0][1]
+                try:
+                    msg = em_mod.message_from_bytes(raw_email, policy=em_mod.policy.default)
+                except Exception:
+                    try:
+                        msg = em_mod.message_from_bytes(raw_email)
+                    except Exception:
+                        self._log(f"     ⚠ Error al parsear el mail")
+                        continue
+                adj_nombres = []
+                for part in msg.walk():
+                    if part.get_content_disposition() != "attachment":
+                        continue
+                    filename = part.get_filename()
+                    if not filename:
+                        continue
+                    ext = os.path.splitext(filename)[1].lower()
+                    if not ext:
+                        ext = ".pdf"
+                    destino = os.path.join(carpeta_escaneos, f"Scan{n_scan}{ext}")
+                    with open(destino, "wb") as f:
+                        f.write(part.get_payload(decode=True))
+                    self._log(f"     → Escaneos\\Scan{n_scan}{ext}  ({filename})")
+                    adj_nombres.append(os.path.basename(destino))
+                    n_scan += 1
+                if adj_nombres:
+                    resultados.append((asunto, adj_nombres, "Escaneos"))
+                    self._mail_data[item]["downloaded"] = True
+                    self._mail_data[item]["checked"] = False
+                    total_adj = len(adj_nombres)
+                    self.after(0, lambda i=item, a=asunto, adj=total_adj:
+                        self._mail_tree.set(i, "sel", "✓") or
+                        self._mail_tree.set(i, "adjuntos", str(adj)) or
+                        self._mail_tree.set(i, "carpeta", "Escaneos"))
+                else:
+                    self._log(f"     ⚠ El mail no tiene adjuntos")
+            mail.logout()
+            self._log(f"COMPLETADO: {sum(len(r[1]) for r in resultados)} archivo(s) guardado(s) en {carpeta_escaneos}.")
+        except Exception as e:
+            self._log(f"ERROR: {e}")
+            resultados = []
+        finally:
+            self.after(0, lambda: self._mail_done(resultados, modo=4))
+
     def _mail_done(self, resultados, modo=0):
         self.tarea_activa = False
         try:
@@ -811,6 +927,7 @@ class DescargaMixin:
             self._mail_btn_buscar_reglas.configure(text="Buscar", state="normal")
             self._mail_btn_ultimos.configure(text="Mail sin filtros", state="normal")
             self._mail_btn_descargar_sel.configure(text="Descargar Selección", state="normal")
+            self._mail_btn_descargar_tickets.configure(text="Descargar Tickets", state="normal")
             self._mail_progress.stop()
             self._mail_progress.set(1)
         except (AttributeError, Exception):
@@ -825,6 +942,9 @@ class DescargaMixin:
                 )
             elif modo == 3:
                 self._mail_lbl_estado.configure(text="Descarga de seleccionados completada")
+            elif modo == 4:
+                total = sum(len(r[1]) for r in resultados)
+                self._mail_lbl_estado.configure(text=f"Tickets descargados: {total} archivo(s) en Escaneos")
         except (AttributeError, Exception):
             pass
         if resultados:
