@@ -1067,12 +1067,13 @@ class ImpresionMixin:
             es_excel = ext in (".XLSX", ".XLS")
 
             # PDFs: un solo trabajo con N copias vía SumatraPDF (rápido).
+            # nocollate: los permisos de 2+ hojas salen 1,1,2,2 (no intercalado 1,2,1,2)
             if ext == ".PDF" and copias > 1:
                 sumatra = self._imp_sumatra_exe()
                 if sumatra:
                     self._log(f"     → Impresora predeterminada ({copias} copias en un solo trabajo)")
                     subprocess.run(
-                        [sumatra, "-print-to-default", "-print-settings", f"{copias}x",
+                        [sumatra, "-print-to-default", "-print-settings", f"{copias}x,nocollate",
                          "-exit-when-done", ruta_archivo],
                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                     )
