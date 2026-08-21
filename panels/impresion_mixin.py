@@ -567,13 +567,22 @@ class ImpresionMixin:
             def _worker():
                 self._set_log_panel("impresion")
                 total = 0
+                sumatra = self._imp_sumatra_exe()
                 for idx, (tipo, n, ruta) in enumerate(tipos):
                     if not os.path.exists(ruta):
                         self._log(f"⚠ Dorso {tipo}: archivo no encontrado ({ruta})")
                         continue
-                    for copia in range(n):
-                        os.startfile(ruta, "print")
-                        time.sleep(0.5)
+                    if n > 1 and sumatra:
+                        # Un solo trabajo con N copias (rápido)
+                        subprocess.run(
+                            [sumatra, "-print-to-default", "-print-settings", f"{n}x",
+                             "-exit-when-done", ruta],
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                        )
+                    else:
+                        for copia in range(n):
+                            os.startfile(ruta, "print")
+                            time.sleep(0.5)
                     total += n
                     self._log(f"Dorso {tipo}: {n} copias enviadas → {os.path.basename(ruta)}")
                     # Si hay más tipos después, esperar que la cola se vacíe antes de continuar
@@ -921,9 +930,9 @@ class ImpresionMixin:
                     if permisos:
                         n_copias_permiso = copias.get("permiso", 2) or self._cfg_obtener_docs("permiso_exportacion", 2)
                         for a in permisos:
-                            for copia_num in range(n_copias_permiso):
-                                self._imp_enviar(os.path.join(ruta, a), impresora, f"Permiso Exp. (copia {copia_num+1}/{n_copias_permiso}): {a}")
-                                total_ok += 1
+                            # Un solo trabajo con N copias (SumatraPDF) en vez de un envío por copia
+                            self._imp_enviar(os.path.join(ruta, a), impresora, f"Permiso Exp. ({n_copias_permiso} copias): {a}", copias=n_copias_permiso)
+                            total_ok += 1
                     else:
                         self._log(f"  ⚠ No se encontró Permiso de Exportación (busca: {prefijo_permiso}*.PDF)")
 
@@ -980,6 +989,23 @@ class ImpresionMixin:
             pass
         return None  # error, imprimir todo
 
+    def _imp_sumatra_exe(self):
+        """Ruta al SumatraPDF portable (engines/sumatra/) o None si no está.
+
+        SumatraPDF permite enviar N copias como UN solo trabajo de impresión
+        a nivel del driver (-print-settings "Nx"), igual que el diálogo manual.
+        """
+        candidatos = []
+        if getattr(sys, "frozen", False):
+            candidatos.append(os.path.join(getattr(sys, "_MEIPASS", ""), "engines", "sumatra", "SumatraPDF.exe"))
+            candidatos.append(os.path.join(os.path.dirname(sys.executable), "engines", "sumatra", "SumatraPDF.exe"))
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidatos.append(os.path.join(raiz, "engines", "sumatra", "SumatraPDF.exe"))
+        for c in candidatos:
+            if c and os.path.isfile(c):
+                return c
+        return None
+
     def _imp_enviar(self, ruta_archivo, impresora, descripcion, hojas=None, copias=1):
         """Envía un archivo a la impresora seleccionada. hojas=lista, copias=N."""
         nombre_archivo = os.path.basename(ruta_archivo)
@@ -992,17 +1018,28 @@ class ImpresionMixin:
                 self._log(f"     → SIMULADO (sin impresora)")
                 return True
 
-            self._log(f"     → Impresora: {impresora}")
             ext = os.path.splitext(ruta_archivo)[1].upper()
             es_excel = ext in (".XLSX", ".XLS")
 
+            # PDFs: un solo trabajo con N copias vía SumatraPDF (rápido).
+            if ext == ".PDF" and copias > 1:
+                sumatra = self._imp_sumatra_exe()
+                if sumatra:
+                    self._log(f"     → Impresora predeterminada ({copias} copias en un solo trabajo)")
+                    subprocess.run(
+                        [sumatra, "-print-to-default", "-print-settings", f"{copias}x",
+                         "-exit-when-done", ruta_archivo],
+                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                    )
+                    return True
+                self._log(f"     → SumatraPDF no disponible: enviando copias una por una")
+
+            self._log(f"     → Impresora predeterminada")
             if es_excel and self._excel_com_ok:
                 result = self._imp_excel_com(ruta_archivo, impresora, hojas, copias)
             else:
                 if es_excel and not self._excel_com_ok:
                     self._log(f"     → Modo visible (COM no disponible, se abrirá Excel)")
-                if "pdf" in impresora.lower():
-                    self._log(f"     → Se abrirá ventana para guardar PDF")
                 for i in range(copias):
                     os.startfile(ruta_archivo, "print")
                     if copias > 1:
