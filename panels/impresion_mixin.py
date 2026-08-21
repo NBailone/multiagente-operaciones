@@ -1023,10 +1023,13 @@ class ImpresionMixin:
             excel = win32com.client.Dispatch("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
+            # Imprimir siempre en la impresora predeterminada del sistema:
+            # no se asigna ActivePrinter (falla con formatos de puerto como PORTPROMPT).
             try:
-                excel.ActivePrinter = impresora
-            except Exception as e:
-                self._log(f"     → ActivePrinter: {e}")
+                import win32print
+                self._log(f"     → Impresora predeterminada: {win32print.GetDefaultPrinter()}")
+            except Exception:
+                pass
 
             wb = excel.Workbooks.Open(ruta)
 
