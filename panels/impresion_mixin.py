@@ -380,6 +380,10 @@ class ImpresionMixin:
             permisos = [a for a in archivos if a.upper().startswith(prefijo_permiso) and a.upper().endswith(".PDF")]
             # Buscar Hoja de Ruta: flexible, que contenga "HOJA" y "RUTA" (no requiere "DE")
             hojas_ruta = [a for a in archivos if "HOJA" in a.upper() and "RUTA" in a.upper() and (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS"))]
+            # Fallback: buscar hoja interna 'Hoja de Ruta' dentro de los Excel
+            hojas_ruta_internas = []
+            if not hojas_ruta:
+                hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos)
 
             # Buscar también con patrón más amplio si no se encontró
             if not permisos:
@@ -404,12 +408,15 @@ class ImpresionMixin:
                 if todos_pdf:
                     self._log(f"   │  ⚠ PDFs en la carpeta: {todos_pdf}")
 
-            self._log(f"   ├─ HOJA DE RUTA (Excel HOJA DE RUTA*):")
+            self._log(f"   ├─ HOJA DE RUTA (nombre u hoja interna):")
             if hojas_ruta:
                 for a in hojas_ruta:
                     self._log(f"   │  ✓ {a}")
+            elif hojas_ruta_internas:
+                for archivo, hoja in hojas_ruta_internas:
+                    self._log(f"   │  ✓ {archivo} → hoja '{hoja}'")
             else:
-                self._log(f"   │  ❌ No encontrado (busca: HOJA DE RUTA*.xlsx)")
+                self._log(f"   │  ❌ No encontrado (busca archivo con 'HOJA'+'RUTA', o hoja interna 'Hoja de Ruta')")
 
             # Detectar hojas Recibo ATA: nombres exactos "Recibo Ata", "Recibo Ata 2", ... "Recibo Ata 8"
             hojas_ata = []
@@ -893,6 +900,13 @@ class ImpresionMixin:
                 permisos = [a for a in archivos if a.upper().startswith(prefijo_permiso) and a.upper().endswith(".PDF")]
                 # Buscar Hoja de Ruta: flexible, que contenga "HOJA" y "RUTA" (no requiere "DE")
                 hojas_ruta = [a for a in archivos if "HOJA" in a.upper() and "RUTA" in a.upper() and (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS"))]
+                # Fallback: si el archivo se llama distinto (ej: "ATA xxx.xls"),
+                # buscar dentro de los Excel una hoja interna que sea la Hoja de Ruta
+                hojas_ruta_internas = []
+                if not hojas_ruta:
+                    hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos)
+                    if hojas_ruta_internas:
+                        self._log(f"  Hoja de Ruta hallada por nombre de hoja interna: {hojas_ruta_internas}")
 
                 # Detectar hojas Recibo ATA: nombres exactos
                 nombres_ata = ["RECIBO ATA"] + [f"RECIBO ATA {i}" for i in range(2, 9)]
@@ -938,13 +952,17 @@ class ImpresionMixin:
 
                 # 3. Hoja de Ruta (Excel)
                 if opciones.get("hoja_ruta"):
+                    n_copias_hr = copias.get("hoja_ruta", 2) or self._cfg_obtener_docs("hoja_ruta", 2)
                     if hojas_ruta:
-                        n_copias_hr = copias.get("hoja_ruta", 2) or self._cfg_obtener_docs("hoja_ruta", 2)
                         for a in hojas_ruta:
                             self._imp_enviar(os.path.join(ruta, a), impresora, f"Hoja Ruta ({n_copias_hr} copias): {a}", copias=n_copias_hr)
                             total_ok += 1
+                    elif hojas_ruta_internas:
+                        for archivo, hoja in hojas_ruta_internas:
+                            self._imp_enviar(os.path.join(ruta, archivo), impresora, f"Hoja Ruta ({n_copias_hr} copias): {archivo} → {hoja}", hojas=[hoja], copias=n_copias_hr)
+                            total_ok += 1
                     else:
-                        self._log(f"  ⚠ No se encontró Hoja de Ruta (busca: HOJA DE RUTA*.xls)")
+                        self._log(f"  ⚠ No se encontró Hoja de Ruta (busca archivo con 'HOJA'+'RUTA' en el nombre, o una hoja interna 'Hoja de Ruta')")
 
                 # 4. Servicio ATA / Recibo ATA: imprimir SOLO las hojas exactas
                 if opciones.get("servicio_ata"):
@@ -988,6 +1006,33 @@ class ImpresionMixin:
         except Exception:
             pass
         return None  # error, imprimir todo
+
+    def _imp_buscar_hoja_ruta_interna(self, ruta, archivos):
+        """Fallback Hoja de Ruta: busca en los Excel de la carpeta una hoja
+        interna cuyo nombre contenga 'HOJA' y 'RUTA'.
+
+        Returns:
+            list[tuple[str, str]]: pares (archivo, nombre_de_hoja).
+        """
+        resultados = []
+        for a in archivos:
+            if not (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS")):
+                continue
+            ruta_excel = os.path.join(ruta, a)
+            try:
+                if a.lower().endswith(".xlsx"):
+                    wb = openpyxl.load_workbook(ruta_excel, read_only=True)
+                    nombres = wb.sheetnames
+                    wb.close()
+                else:
+                    nombres = xlrd.open_workbook(ruta_excel).sheet_names()
+                for sn in nombres:
+                    su = sn.upper()
+                    if "HOJA" in su and "RUTA" in su:
+                        resultados.append((a, sn))
+            except Exception:
+                continue
+        return resultados
 
     def _imp_sumatra_exe(self):
         """Ruta al SumatraPDF portable (engines/sumatra/) o None si no está.
