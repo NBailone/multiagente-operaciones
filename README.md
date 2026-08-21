@@ -86,21 +86,20 @@ Las contraseñas y API keys se guardan en la configuración con prefijo `enc::`,
 ## Requisitos
 
 - **Windows** (usa pywin32 para impresión y COM).
-- Python 3.9+.
-- Tesseract-OCR y Poppler (opcionales si se usa OCR local; el proyecto incluye el script `engines/setup_paddle.ps1` para instalar PaddleOCR).
+- Python 3.9+ (solo para desarrollo; el OCR usa su propio runtime portable).
+- Conexión a internet la primera vez (el setup descarga los binarios de terceros).
 
 ## Instalación
+
+Los binarios de terceros (Python portable con PaddleOCR, Tesseract, Poppler) **no se versionan en Git**; el script `setup.ps1` los descarga e instala automáticamente desde las fuentes oficiales.
 
 ```bash
 # 1. Clonar el repositorio
 git clone https://github.com/NBailone/multiagente-operaciones.git
 cd multiagente-operaciones
 
-# 2. Crear entorno virtual e instalar dependencias
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-python -c "import customtkinter, openpyxl, xlrd, win32com; print('OK')"
+# 2. Setup: dependencias + motores OCR + Poppler (una sola vez)
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
 
 # 3. Configurar la clave de encriptación
 cp .env.example .env
@@ -111,7 +110,7 @@ cp .env.example .env
 python app.py
 ```
 
-> En la primera ejecución la aplicación intenta instalar las dependencias de la interfaz automáticamente.
+> `setup.ps1` es idempotente: si algo ya está instalado, lo salta. Puede pedir permiso de administrador (UAC) para instalar Tesseract. En la primera ejecución la aplicación intenta instalar las dependencias de la interfaz automáticamente.
 
 ## Configuración
 
@@ -122,10 +121,12 @@ python app.py
 ## Empaquetar como .exe
 
 ```bash
-pyinstaller Sistema_Automatizacion.spec
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-El ejecutable se genera en `dist/`. Incluir junto al `.exe` las carpetas `engines/` (OCR), `poppler/` (conversión PDF) y `python39/` (runtime).
+El script compila con PyInstaller (`ui_app.spec`, modo ONEFOLDER portable), copia `python39/` al lado del ejecutable y verifica que ambos motores OCR respondan. El resultado queda en `dist\Sistema_Automatizacion\`.
+
+> Requiere `pyinstaller` instalado en el entorno de desarrollo: `python -m pip install pyinstaller`.
 
 ## Estructura del proyecto
 
@@ -142,8 +143,10 @@ El ejecutable se genera en `dist/`. Incluir junto al `.exe` las carpetas `engine
 ├── poppler/                # Herramientas de conversión PDF
 ├── openspec/               # Documentación de diseño (SDD)
 ├── requirements.txt        # Dependencias mínimas
-├── .env.example            # Plantilla de variables de entorno
-└── Sistema_Automatizacion.spec  # Script de PyInstaller
+├── setup.ps1               # Bootstrap: descarga python39, Tesseract y Poppler (clone fresco)
+├── build.ps1               # Build del .exe con PyInstaller + verificación de motores OCR
+├── ui_app.spec             # Script de PyInstaller
+└── .env.example            # Plantilla de variables de entorno
 ```
 
 ## Stack
