@@ -401,20 +401,22 @@ def generar_carga_sistema(ruta_carpeta, log=None):
             c.alignment = centro
         return c
 
-    def celda_cabecera(fila, letra, val, alineacion):
-        """Etiqueta/valor de cabecera (filas 1-3): negrita tamano 12 + alineacion fija."""
+    def celda_cabecera(fila, letra, val, alineacion, bold=True):
+        """Etiqueta/valor de cabecera (filas 1-3) con borde y alineacion fija."""
         c = ws[f"{letra}{fila}"]
         c.value = val
-        c.font = Font(name="Arial Narrow", size=12, bold=True)
+        c.font = Font(name="Arial Narrow", size=12, bold=bold)
         c.alignment = alineacion
+        c.border = borde
         return c
 
     # Fila 1: Fecha Carga | Fila 2: PE | Fila 3: CUIT TRANSPORTE
-    # Etiqueta en A (negrita, izquierda) — valor en B (negrita, derecha)
+    # Etiqueta en A (borde + negrita + izquierda) — valor en B (borde + derecha)
     celda_cabecera(1, "A", "Fecha Carga", izq)
     c_b1 = ws["B1"]
-    c_b1.font = Font(name="Arial Narrow", size=12, bold=True)
+    c_b1.font = Font(name="Arial Narrow", size=12)
     c_b1.alignment = der
+    c_b1.border = borde
     if fecha_carga_dt is not None:
         c_b1.value = fecha_carga_dt
         c_b1.number_format = "DD/MM/YYYY"
@@ -422,11 +424,10 @@ def generar_carga_sistema(ruta_carpeta, log=None):
         c_b1.value = fecha_carga
 
     celda_cabecera(2, "A", "PE", izq)
-    celda_cabecera(2, "B", pe, der)
+    celda_cabecera(2, "B", pe, der, bold=False)
 
     celda_cabecera(3, "A", "CUIT TRANSPORTE ", izq)
-    if cuit_transporte:
-        celda_cabecera(3, "B", cuit_transporte, der)
+    celda_cabecera(3, "B", cuit_transporte, der, bold=False)
 
     # Fila 5: cabecera de tabla
     headers = ["PRECINTO ADUANA", "DOMINIO TRACTOR", "DOMINIO SEMI",
