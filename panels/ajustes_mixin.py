@@ -315,6 +315,24 @@ class AjustesMixin:
         self._ent_sobre = self._ajustes_row(
             col_der, "Sobre (Planilla de Carga):", str(self._cfg_obtener_docs("sobre", 1)), width=70)
 
+        # Intercalado de copias múltiples (permisos/dorsos PDF)
+        self._chk_intercalar = ctk.CTkCheckBox(
+            col_der, text="Intercalar copias",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
+            text_color=Palette.TEXT_PRIMARY,
+        )
+        if self._cfg_obtener_docs("intercalar", False):
+            self._chk_intercalar.select()
+        self._chk_intercalar.pack(anchor="w", padx=14, pady=(8, 0))
+        ctk.CTkLabel(
+            col_der,
+            text="Marcado: 1,2,1,2 (juego completo por copia)\nDesmarcado: 1,1,2,2 (cada hoja junta)",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            text_color=Palette.TEXT_MUTED, anchor="w", justify="left",
+        ).pack(anchor="w", padx=14, pady=(2, 0))
+
     def _ajustes_row_browse(self, parent, label, default="", extra=None, width=290):
         """Como _ajustes_row pero con botón 📂 Examinar.
            Detecta automáticamente si es pendrive (ruta relativa) o disco fijo (absoluta)."""
@@ -921,6 +939,9 @@ class AjustesMixin:
                         docs_cfg[key_doc] = int(w.get().strip())
                     except ValueError:
                         pass
+            w_chk = _g("_chk_intercalar")
+            if w_chk is not None:
+                docs_cfg["intercalar"] = bool(w_chk.get())
             if docs_cfg:
                 self.config["documentos"] = {**self.config.get("documentos", {}), **docs_cfg}
 

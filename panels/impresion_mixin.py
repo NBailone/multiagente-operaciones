@@ -581,7 +581,10 @@ class ImpresionMixin:
                         continue
                     if n > 1 and sumatra:
                         # Un solo trabajo con N copias en orden explícito
-                        secuencia = self._imp_secuencia_paginas(ruta, n) or f"{n}x,nocollate"
+                        secuencia = self._imp_secuencia_paginas(
+                            ruta, n,
+                            intercalar=self._cfg_obtener_docs("intercalar", False),
+                        ) or f"{n}x,nocollate"
                         subprocess.run(
                             [sumatra, "-print-to-default", "-print-settings", secuencia,
                              "-exit-when-done", ruta],
@@ -1092,10 +1095,11 @@ class ImpresionMixin:
                 return c
         return None
 
-    def _imp_secuencia_paginas(self, ruta_pdf, copias):
-        """Secuencia literal de páginas para N copias sin intercalar.
+    def _imp_secuencia_paginas(self, ruta_pdf, copias, intercalar=False):
+        """Secuencia literal de páginas para N copias.
 
-        Ej: 2 copias de un PDF de 2 páginas -> "1,1,2,2".
+        intercalar=False -> "1,1,2,2" (cada hoja junta)
+        intercalar=True  -> "1,2,1,2" (juego completo por copia)
         No depende del flag de collate del driver (algunos lo ignoran).
 
         Returns:
@@ -1108,8 +1112,12 @@ class ImpresionMixin:
             if total < 1 or copias < 1:
                 return None
             paginas = []
-            for p in range(1, total + 1):
-                paginas.extend([str(p)] * copias)
+            if intercalar:
+                for _copia in range(copias):
+                    paginas.extend(str(p) for p in range(1, total + 1))
+            else:
+                for p in range(1, total + 1):
+                    paginas.extend([str(p)] * copias)
             return ",".join(paginas)
         except Exception:
             return None
@@ -1135,7 +1143,9 @@ class ImpresionMixin:
             if ext == ".PDF" and copias > 1:
                 sumatra = self._imp_sumatra_exe()
                 if sumatra:
-                    secuencia = self._imp_secuencia_paginas(ruta_archivo, copias)
+                    secuencia = self._imp_secuencia_paginas(
+                        ruta_archivo, copias,
+                        intercalar=self._cfg_obtener_docs("intercalar", False))
                     settings = secuencia or f"{copias}x,nocollate"
                     self._log(f"     → Impresora predeterminada ({copias} copias en un solo trabajo)")
                     subprocess.run(
