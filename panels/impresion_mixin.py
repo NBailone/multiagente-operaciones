@@ -1,4 +1,4 @@
-"""ImpresionMixin — Panel de Impresión Documental.
+﻿"""ImpresionMixin — Panel de Impresión Documental.
 
 Legacy block extracted from ui_app.py. Methods are mixed into the main
 App class; they rely on attributes/methods living on the composed instance
@@ -383,7 +383,7 @@ class ImpresionMixin:
             # Fallback: buscar hoja interna 'Hoja de Ruta' dentro de los Excel
             hojas_ruta_internas = []
             if not hojas_ruta:
-                hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos)
+                hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos, excluir=sobres)
 
             # Buscar también con patrón más amplio si no se encontró
             if not permisos:
@@ -416,7 +416,7 @@ class ImpresionMixin:
                 for archivo, hoja in hojas_ruta_internas:
                     self._log(f"   │  ✓ {archivo} → hoja '{hoja}'")
             else:
-                self._log(f"   │  ❌ No encontrado (busca archivo con 'HOJA'+'RUTA', o hoja interna 'Hoja de Ruta')")
+                self._log(f"   │  ❌ No encontrado (busca 'HOJA'+'RUTA' en nombre de archivo/hoja, o el texto en el contenido)")
 
             # Detectar hojas Recibo ATA: nombres exactos "Recibo Ata", "Recibo Ata 2", ... "Recibo Ata 8"
             hojas_ata = []
@@ -904,7 +904,7 @@ class ImpresionMixin:
                 # buscar dentro de los Excel una hoja interna que sea la Hoja de Ruta
                 hojas_ruta_internas = []
                 if not hojas_ruta:
-                    hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos)
+                    hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos, excluir=sobres)
                     if hojas_ruta_internas:
                         self._log(f"  Hoja de Ruta hallada por nombre de hoja interna: {hojas_ruta_internas}")
 
@@ -962,7 +962,7 @@ class ImpresionMixin:
                             self._imp_enviar(os.path.join(ruta, archivo), impresora, f"Hoja Ruta ({n_copias_hr} copias): {archivo} → {hoja}", hojas=[hoja], copias=n_copias_hr)
                             total_ok += 1
                     else:
-                        self._log(f"  ⚠ No se encontró Hoja de Ruta (busca archivo con 'HOJA'+'RUTA' en el nombre, o una hoja interna 'Hoja de Ruta')")
+                        self._log(f"  ⚠ No se encontró Hoja de Ruta (busca 'HOJA'+'RUTA' en nombre de archivo/hoja, o el texto en el contenido)")
 
                 # 4. Servicio ATA / Recibo ATA: imprimir SOLO las hojas exactas
                 if opciones.get("servicio_ata"):
@@ -1007,32 +1007,71 @@ class ImpresionMixin:
             pass
         return None  # error, imprimir todo
 
-    def _imp_buscar_hoja_ruta_interna(self, ruta, archivos):
-        """Fallback Hoja de Ruta: busca en los Excel de la carpeta una hoja
-        interna cuyo nombre contenga 'HOJA' y 'RUTA'.
+    def _imp_buscar_hoja_ruta_interna(self, ruta, archivos, excluir=()):
+        """Fallbacks Hoja de Ruta dentro de los Excel de la carpeta.
+
+        Nivel 1: alguna hoja se llama con 'HOJA'+'RUTA'.
+        Nivel 2: alguna celda de las primeras ~60 filas contiene el texto
+        'HOJA ... RUTA' (los nombres de hoja pueden ser genericos como Hoja1).
+        El nivel 2 excluye los archivos en `excluir` (ej: *CONTENEDORES*, que
+        ya se procesan para Sobre/Recibos ATA y podrian mencionar el texto).
 
         Returns:
             list[tuple[str, str]]: pares (archivo, nombre_de_hoja).
         """
-        resultados = []
+        excluir_up = [e.upper() for e in excluir]
+        por_nombre = []
+        por_contenido = []
         for a in archivos:
             if not (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS")):
                 continue
             ruta_excel = os.path.join(ruta, a)
+            es_xlsx = a.lower().endswith(".xlsx")
             try:
-                if a.lower().endswith(".xlsx"):
+                if es_xlsx:
                     wb = openpyxl.load_workbook(ruta_excel, read_only=True)
-                    nombres = wb.sheetnames
-                    wb.close()
+                    nombres_hojas = [(sn, wb[sn]) for sn in wb.sheetnames]
                 else:
-                    nombres = xlrd.open_workbook(ruta_excel).sheet_names()
-                for sn in nombres:
-                    su = sn.upper()
-                    if "HOJA" in su and "RUTA" in su:
-                        resultados.append((a, sn))
+                    book = xlrd.open_workbook(ruta_excel)
+                    nombres_hojas = [(sn, book.sheet_by_name(sn)) for sn in book.sheet_names()]
+
+                match_nombre = [sn for sn, _ in nombres_hojas
+                                if "HOJA" in sn.upper() and "RUTA" in sn.upper()]
+                for sn in match_nombre:
+                    por_nombre.append((a, sn))
+                if match_nombre or a.upper() in excluir_up:
+                    continue
+
+                # Nivel 2: buscar el texto dentro de las celdas (tope 60 filas)
+                for sn, hoja in nombres_hojas:
+                    encontrado = False
+                    if es_xlsx:
+                        for fila in hoja.iter_rows(max_row=60):
+                            for cell in fila:
+                                v = str(cell.value or "").upper()
+                                if "HOJA" in v and "RUTA" in v:
+                                    encontrado = True
+                                    break
+                            if encontrado:
+                                break
+                    else:
+                        filas = min(hoja.nrows, 60)
+                        for r in range(filas):
+                            for c in range(hoja.ncols):
+                                v = str(hoja.cell_value(r, c)).upper()
+                                if "HOJA" in v and "RUTA" in v:
+                                    encontrado = True
+                                    break
+                            if encontrado:
+                                break
+                    if encontrado:
+                        por_contenido.append((a, sn))
+                        break
+                if es_xlsx:
+                    wb.close()
             except Exception:
                 continue
-        return resultados
+        return por_nombre if por_nombre else por_contenido
 
     def _imp_sumatra_exe(self):
         """Ruta al SumatraPDF portable (engines/sumatra/) o None si no está.
