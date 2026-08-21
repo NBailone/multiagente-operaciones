@@ -11,7 +11,7 @@ Reglas heredadas del script original:
   - KG BRUTOS siempre sale de K. BRUTOS por contenedor.
   - CUIT calculado desde el DNI (modulo 11, prefijo 20, fallback 23).
   - Si la salida ya existia, se conserva el CUIT TRANSPORTE cargado (B3)
-    y se hace backup con timestamp antes de sobrescribir.
+    y se sobrescribe sin backup.
 """
 
 import os
@@ -372,17 +372,6 @@ def generar_carga_sistema(ruta_carpeta, log=None):
         res["salida"] = ""
         return res
 
-    # --- Backup previo -------------------------------------------------------
-    if os.path.isfile(out_path):
-        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        backup_path = os.path.join(ruta_carpeta, out_name.replace(".xlsx", f".backup-{stamp}.xlsx"))
-        try:
-            import shutil
-            shutil.copy2(out_path, backup_path)
-            log(f"Backup previo: {os.path.basename(backup_path)}")
-        except Exception as e:
-            log(f"No se pudo hacer backup del archivo anterior: {e}")
-
     # --- Escribir xlsx -------------------------------------------------------
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -399,6 +388,8 @@ def generar_carga_sistema(ruta_carpeta, log=None):
     fuente_bold = Font(name="Arial Narrow", size=11, bold=True)
     fill_header = PatternFill("solid", fgColor="FFD9E1F2")
     centro = Alignment(horizontal="center", vertical="center")
+    izq = Alignment(horizontal="left", vertical="center")
+    der = Alignment(horizontal="right", vertical="center")
 
     def celda_texto(fila, letra, val, bold=False, borde_on=True, centro_on=True):
         c = ws[f"{letra}{fila}"]
@@ -410,21 +401,32 @@ def generar_carga_sistema(ruta_carpeta, log=None):
             c.alignment = centro
         return c
 
+    def celda_cabecera(fila, letra, val, alineacion):
+        """Etiqueta/valor de cabecera (filas 1-3): negrita + alineacion fija."""
+        c = ws[f"{letra}{fila}"]
+        c.value = val
+        c.font = fuente_bold
+        c.alignment = alineacion
+        return c
+
     # Fila 1: Fecha Carga | Fila 2: PE | Fila 3: CUIT TRANSPORTE
-    celda_texto(1, "A", "Fecha Carga", bold=True, borde_on=False, centro_on=False)
+    # Etiqueta en A (negrita, izquierda) — valor en B (negrita, derecha)
+    celda_cabecera(1, "A", "Fecha Carga", izq)
     c_b1 = ws["B1"]
+    c_b1.font = fuente_bold
+    c_b1.alignment = der
     if fecha_carga_dt is not None:
         c_b1.value = fecha_carga_dt
         c_b1.number_format = "DD/MM/YYYY"
     else:
         c_b1.value = fecha_carga
 
-    celda_texto(2, "A", "PE", bold=True, borde_on=False, centro_on=False)
-    ws["B2"] = pe
+    celda_cabecera(2, "A", "PE", izq)
+    celda_cabecera(2, "B", pe, der)
 
-    celda_texto(3, "A", "CUIT TRANSPORTE ", bold=True, borde_on=False, centro_on=False)
+    celda_cabecera(3, "A", "CUIT TRANSPORTE ", izq)
     if cuit_transporte:
-        ws["B3"] = cuit_transporte
+        celda_cabecera(3, "B", cuit_transporte, der)
 
     # Fila 5: cabecera de tabla
     headers = ["PRECINTO ADUANA", "DOMINIO TRACTOR", "DOMINIO SEMI",
