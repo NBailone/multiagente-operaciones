@@ -380,6 +380,10 @@ class ImpresionMixin:
             permisos = [a for a in archivos if a.upper().startswith(prefijo_permiso) and a.upper().endswith(".PDF")]
             # Buscar Hoja de Ruta: flexible, que contenga "HOJA" y "RUTA" (no requiere "DE")
             hojas_ruta = [a for a in archivos if "HOJA" in a.upper() and "RUTA" in a.upper() and (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS"))]
+            # Fallback: buscar hoja interna 'Hoja de Ruta' dentro de los Excel
+            hojas_ruta_internas = []
+            if not hojas_ruta:
+                hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos)
 
             # Buscar también con patrón más amplio si no se encontró
             if not permisos:
@@ -404,12 +408,15 @@ class ImpresionMixin:
                 if todos_pdf:
                     self._log(f"   │  ⚠ PDFs en la carpeta: {todos_pdf}")
 
-            self._log(f"   ├─ HOJA DE RUTA (Excel HOJA DE RUTA*):")
+            self._log(f"   ├─ HOJA DE RUTA (nombre u hoja interna):")
             if hojas_ruta:
                 for a in hojas_ruta:
                     self._log(f"   │  ✓ {a}")
+            elif hojas_ruta_internas:
+                for archivo, hoja in hojas_ruta_internas:
+                    self._log(f"   │  ✓ {archivo} → hoja '{hoja}'")
             else:
-                self._log(f"   │  ❌ No encontrado (busca: HOJA DE RUTA*.xlsx)")
+                self._log(f"   │  ❌ No encontrado (busca archivo con 'HOJA'+'RUTA', o hoja interna 'Hoja de Ruta')")
 
             # Detectar hojas Recibo ATA: nombres exactos "Recibo Ata", "Recibo Ata 2", ... "Recibo Ata 8"
             hojas_ata = []
@@ -567,13 +574,22 @@ class ImpresionMixin:
             def _worker():
                 self._set_log_panel("impresion")
                 total = 0
+                sumatra = self._imp_sumatra_exe()
                 for idx, (tipo, n, ruta) in enumerate(tipos):
                     if not os.path.exists(ruta):
                         self._log(f"⚠ Dorso {tipo}: archivo no encontrado ({ruta})")
                         continue
-                    for copia in range(n):
-                        os.startfile(ruta, "print")
-                        time.sleep(0.5)
+                    if n > 1 and sumatra:
+                        # Un solo trabajo con N copias (rápido)
+                        subprocess.run(
+                            [sumatra, "-print-to-default", "-print-settings", f"{n}x",
+                             "-exit-when-done", ruta],
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                        )
+                    else:
+                        for copia in range(n):
+                            os.startfile(ruta, "print")
+                            time.sleep(0.5)
                     total += n
                     self._log(f"Dorso {tipo}: {n} copias enviadas → {os.path.basename(ruta)}")
                     # Si hay más tipos después, esperar que la cola se vacíe antes de continuar
@@ -884,6 +900,13 @@ class ImpresionMixin:
                 permisos = [a for a in archivos if a.upper().startswith(prefijo_permiso) and a.upper().endswith(".PDF")]
                 # Buscar Hoja de Ruta: flexible, que contenga "HOJA" y "RUTA" (no requiere "DE")
                 hojas_ruta = [a for a in archivos if "HOJA" in a.upper() and "RUTA" in a.upper() and (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS"))]
+                # Fallback: si el archivo se llama distinto (ej: "ATA xxx.xls"),
+                # buscar dentro de los Excel una hoja interna que sea la Hoja de Ruta
+                hojas_ruta_internas = []
+                if not hojas_ruta:
+                    hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos)
+                    if hojas_ruta_internas:
+                        self._log(f"  Hoja de Ruta hallada por nombre de hoja interna: {hojas_ruta_internas}")
 
                 # Detectar hojas Recibo ATA: nombres exactos
                 nombres_ata = ["RECIBO ATA"] + [f"RECIBO ATA {i}" for i in range(2, 9)]
@@ -921,21 +944,25 @@ class ImpresionMixin:
                     if permisos:
                         n_copias_permiso = copias.get("permiso", 2) or self._cfg_obtener_docs("permiso_exportacion", 2)
                         for a in permisos:
-                            for copia_num in range(n_copias_permiso):
-                                self._imp_enviar(os.path.join(ruta, a), impresora, f"Permiso Exp. (copia {copia_num+1}/{n_copias_permiso}): {a}")
-                                total_ok += 1
+                            # Un solo trabajo con N copias (SumatraPDF) en vez de un envío por copia
+                            self._imp_enviar(os.path.join(ruta, a), impresora, f"Permiso Exp. ({n_copias_permiso} copias): {a}", copias=n_copias_permiso)
+                            total_ok += 1
                     else:
                         self._log(f"  ⚠ No se encontró Permiso de Exportación (busca: {prefijo_permiso}*.PDF)")
 
                 # 3. Hoja de Ruta (Excel)
                 if opciones.get("hoja_ruta"):
+                    n_copias_hr = copias.get("hoja_ruta", 2) or self._cfg_obtener_docs("hoja_ruta", 2)
                     if hojas_ruta:
-                        n_copias_hr = copias.get("hoja_ruta", 2) or self._cfg_obtener_docs("hoja_ruta", 2)
                         for a in hojas_ruta:
                             self._imp_enviar(os.path.join(ruta, a), impresora, f"Hoja Ruta ({n_copias_hr} copias): {a}", copias=n_copias_hr)
                             total_ok += 1
+                    elif hojas_ruta_internas:
+                        for archivo, hoja in hojas_ruta_internas:
+                            self._imp_enviar(os.path.join(ruta, archivo), impresora, f"Hoja Ruta ({n_copias_hr} copias): {archivo} → {hoja}", hojas=[hoja], copias=n_copias_hr)
+                            total_ok += 1
                     else:
-                        self._log(f"  ⚠ No se encontró Hoja de Ruta (busca: HOJA DE RUTA*.xls)")
+                        self._log(f"  ⚠ No se encontró Hoja de Ruta (busca archivo con 'HOJA'+'RUTA' en el nombre, o una hoja interna 'Hoja de Ruta')")
 
                 # 4. Servicio ATA / Recibo ATA: imprimir SOLO las hojas exactas
                 if opciones.get("servicio_ata"):
@@ -980,6 +1007,50 @@ class ImpresionMixin:
             pass
         return None  # error, imprimir todo
 
+    def _imp_buscar_hoja_ruta_interna(self, ruta, archivos):
+        """Fallback Hoja de Ruta: busca en los Excel de la carpeta una hoja
+        interna cuyo nombre contenga 'HOJA' y 'RUTA'.
+
+        Returns:
+            list[tuple[str, str]]: pares (archivo, nombre_de_hoja).
+        """
+        resultados = []
+        for a in archivos:
+            if not (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS")):
+                continue
+            ruta_excel = os.path.join(ruta, a)
+            try:
+                if a.lower().endswith(".xlsx"):
+                    wb = openpyxl.load_workbook(ruta_excel, read_only=True)
+                    nombres = wb.sheetnames
+                    wb.close()
+                else:
+                    nombres = xlrd.open_workbook(ruta_excel).sheet_names()
+                for sn in nombres:
+                    su = sn.upper()
+                    if "HOJA" in su and "RUTA" in su:
+                        resultados.append((a, sn))
+            except Exception:
+                continue
+        return resultados
+
+    def _imp_sumatra_exe(self):
+        """Ruta al SumatraPDF portable (engines/sumatra/) o None si no está.
+
+        SumatraPDF permite enviar N copias como UN solo trabajo de impresión
+        a nivel del driver (-print-settings "Nx"), igual que el diálogo manual.
+        """
+        candidatos = []
+        if getattr(sys, "frozen", False):
+            candidatos.append(os.path.join(getattr(sys, "_MEIPASS", ""), "engines", "sumatra", "SumatraPDF.exe"))
+            candidatos.append(os.path.join(os.path.dirname(sys.executable), "engines", "sumatra", "SumatraPDF.exe"))
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidatos.append(os.path.join(raiz, "engines", "sumatra", "SumatraPDF.exe"))
+        for c in candidatos:
+            if c and os.path.isfile(c):
+                return c
+        return None
+
     def _imp_enviar(self, ruta_archivo, impresora, descripcion, hojas=None, copias=1):
         """Envía un archivo a la impresora seleccionada. hojas=lista, copias=N."""
         nombre_archivo = os.path.basename(ruta_archivo)
@@ -992,17 +1063,28 @@ class ImpresionMixin:
                 self._log(f"     → SIMULADO (sin impresora)")
                 return True
 
-            self._log(f"     → Impresora: {impresora}")
             ext = os.path.splitext(ruta_archivo)[1].upper()
             es_excel = ext in (".XLSX", ".XLS")
 
+            # PDFs: un solo trabajo con N copias vía SumatraPDF (rápido).
+            if ext == ".PDF" and copias > 1:
+                sumatra = self._imp_sumatra_exe()
+                if sumatra:
+                    self._log(f"     → Impresora predeterminada ({copias} copias en un solo trabajo)")
+                    subprocess.run(
+                        [sumatra, "-print-to-default", "-print-settings", f"{copias}x",
+                         "-exit-when-done", ruta_archivo],
+                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                    )
+                    return True
+                self._log(f"     → SumatraPDF no disponible: enviando copias una por una")
+
+            self._log(f"     → Impresora predeterminada")
             if es_excel and self._excel_com_ok:
                 result = self._imp_excel_com(ruta_archivo, impresora, hojas, copias)
             else:
                 if es_excel and not self._excel_com_ok:
                     self._log(f"     → Modo visible (COM no disponible, se abrirá Excel)")
-                if "pdf" in impresora.lower():
-                    self._log(f"     → Se abrirá ventana para guardar PDF")
                 for i in range(copias):
                     os.startfile(ruta_archivo, "print")
                     if copias > 1:
@@ -1023,10 +1105,13 @@ class ImpresionMixin:
             excel = win32com.client.Dispatch("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
+            # Imprimir siempre en la impresora predeterminada del sistema:
+            # no se asigna ActivePrinter (falla con formatos de puerto como PORTPROMPT).
             try:
-                excel.ActivePrinter = impresora
-            except Exception as e:
-                self._log(f"     → ActivePrinter: {e}")
+                import win32print
+                self._log(f"     → Impresora predeterminada: {win32print.GetDefaultPrinter()}")
+            except Exception:
+                pass
 
             wb = excel.Workbooks.Open(ruta)
 

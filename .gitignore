@@ -42,6 +42,7 @@ poppler/
 # ── OCR engines (downloaded binaries) ────────────────────
 engines/tesseract/
 engines/paddleocr/
+engines/sumatra/
 
 # ── Debug / temp ─────────────────────────────────────────
 debug_*.txt

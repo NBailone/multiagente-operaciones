@@ -307,6 +307,10 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         dlg.grab_set()
         dlg.minsize(400, 215)
         dlg.update_idletasks()
+
+        # Cerrar con X = cerrar la aplicación (no permitir acceso sin autenticar)
+        dlg.protocol("WM_DELETE_WINDOW", lambda: (dlg.destroy(), self.destroy()))
+
         px = self.winfo_x() + (self.winfo_width() - 400) // 2
         py = self.winfo_y() + (self.winfo_height() - 215) // 2
         dlg.geometry(f"400x215+{px}+{py}")
