@@ -20,6 +20,7 @@ $projectRoot = $PSScriptRoot
 $PYTHON_VERSION = "3.9.7"
 $TESSERACT_TAG  = "v5.4.0.20240606"
 $POPLER_TAG     = "v26.02.0-0"
+$SUMATRA_VERSION = "3.6.1"
 
 $tmp = Join-Path $env:TEMP "multiagente-setup"
 New-Item -ItemType Directory -Path $tmp -Force | Out-Null
@@ -66,10 +67,14 @@ function Test-PopplerOk {
     return ((Invoke-NativeQuiet $exe -ArgumentList "-v") -eq 0)
 }
 
+function Test-SumatraOk {
+    return (Test-Path (Join-Path $projectRoot "engines\sumatra\SumatraPDF.exe"))
+}
+
 Write-Host "=== Setup Multiagente ===" -ForegroundColor Cyan
 
-# ── [1/4] Dependencias Python ─────────────────────────────────
-Write-Host "`n[1/4] Dependencias Python (requirements.txt)" -ForegroundColor Yellow
+# ── [1/5] Dependencias Python ─────────────────────────────────
+Write-Host "`n[1/5] Dependencias Python (requirements.txt)" -ForegroundColor Yellow
 python -c "import customtkinter, openpyxl, xlrd, win32com" *> $null
 if ($LASTEXITCODE -ne 0) {
     python -m pip install -r (Join-Path $projectRoot "requirements.txt")
@@ -78,8 +83,8 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "    ya instaladas, salteando" -ForegroundColor DarkGray
 }
 
-# ── [2/4] python39/ — runtime portable con PaddleOCR ──────────
-Write-Host "`n[2/4] python39/ (Python embeddable + PaddleOCR)" -ForegroundColor Yellow
+# ── [2/5] python39/ — runtime portable con PaddleOCR ──────────
+Write-Host "`n[2/5] python39/ (Python embeddable + PaddleOCR)" -ForegroundColor Yellow
 if (Test-PaddleOk) {
     Write-Host "    ya instalado, salteando" -ForegroundColor DarkGray
 } else {
@@ -112,8 +117,8 @@ if (Test-PaddleOk) {
     if (-not (Test-PaddleOk)) { throw "PaddleOCR no quedó funcional en python39/" }
 }
 
-# ── [3/4] engines/tesseract/ — OCR portable ───────────────────
-Write-Host "`n[3/4] engines/tesseract/ (Tesseract-OCR)" -ForegroundColor Yellow
+# ── [3/5] engines/tesseract/ — OCR portable ───────────────────
+Write-Host "`n[3/5] engines/tesseract/ (Tesseract-OCR)" -ForegroundColor Yellow
 if (Test-TesseractOk) {
     Write-Host "    ya instalado, salteando" -ForegroundColor DarkGray
 } else {
@@ -145,8 +150,8 @@ if (Test-TesseractOk) {
     }
 }
 
-# ── [4/4] poppler/ — conversión PDF → imagen ──────────────────
-Write-Host "`n[4/4] poppler/ (conversión PDF)" -ForegroundColor Yellow
+# ── [4/5] poppler/ — conversión PDF → imagen ──────────────────
+Write-Host "`n[4/5] poppler/ (conversión PDF)" -ForegroundColor Yellow
 if (Test-PopplerOk) {
     Write-Host "    ya instalado, salteando" -ForegroundColor DarkGray
 } else {
@@ -178,6 +183,38 @@ if (Test-PopplerOk) {
     Remove-Item $extractTo -Recurse -Force
 }
 
+# ── [5/5] engines/sumatra/ — impresión PDF con N copias ───────
+Write-Host "`n[5/5] engines/sumatra/ (SumatraPDF para copias múltiples)" -ForegroundColor Yellow
+if (Test-SumatraOk) {
+    Write-Host "    ya instalado, salteando" -ForegroundColor DarkGray
+} else {
+    # URL pinneado; si falla, descubrir la versión actual desde la página oficial
+    $url = "https://www.sumatrapdfreader.org/dl/rel/$SUMATRA_VERSION/SumatraPDF-$SUMATRA_VERSION-64.zip"
+    try {
+        Invoke-WebRequest -Uri $url -Method Head -UseBasicParsing | Out-Null
+    } catch {
+        Write-Host "    [AVISO] versión pinneada ($SUMATRA_VERSION) no disponible, buscando la actual..." -ForegroundColor Magenta
+        $page = Invoke-WebRequest -Uri "https://www.sumatrapdfreader.org/download-free-pdf-viewer" -UseBasicParsing
+        $match = [regex]::Match($page.Content, '/dl/rel/[\d\.]+/SumatraPDF-[\d\.]+-64\.zip')
+        if (-not $match.Success) { throw "No se pudo determinar la URL de SumatraPDF; descargalo a mano en engines\sumatra\" }
+        $url = "https://www.sumatrapdfreader.org$($match.Value)"
+    }
+
+    $zip = Join-Path $tmp "sumatra.zip"
+    Invoke-Download $url $zip
+    $extractTo = Join-Path $tmp "sumatra-extract"
+    if (Test-Path $extractTo) { Remove-Item $extractTo -Recurse -Force }
+    Expand-Archive -Path $zip -DestinationPath $extractTo -Force
+
+    # El zip trae el exe con nombre versionado (ej: SumatraPDF-3.6.1-64.exe); normalizar
+    $exe = Get-ChildItem $extractTo -Recurse -Filter "SumatraPDF*.exe" | Select-Object -First 1
+    if ($null -eq $exe) { throw "SumatraPDF.exe not found in zip" }
+    $destDir = Join-Path $projectRoot "engines\sumatra"
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    Copy-Item $exe.FullName -Destination (Join-Path $destDir "SumatraPDF.exe") -Force
+    Remove-Item $extractTo -Recurse -Force
+}
+
 # ── Verificación final ────────────────────────────────────────
 Write-Host "`n=== Verificación final ===" -ForegroundColor Cyan
 $tessVersion = (& (Join-Path $projectRoot "engines\tesseract\tesseract.exe") --version | Select-Object -First 1)
@@ -189,7 +226,9 @@ try {
     Write-Host "Poppler   : $popplerVersion"
 } catch { Write-Host "Poppler   : [sin salida]" }
 finally { $ErrorActionPreference = $prev }
+Write-Host ("Sumatra   : " + $(if (Test-SumatraOk) { "ok (engines\sumatra)" } else { "[no instalado: las copias múltiples irán una por una]" }))
 
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ""
 Write-Host "Setup OK. Siguiente paso: configurar .env (clave de encriptación) y ejecutar 'python app.py'" -ForegroundColor Green
+
