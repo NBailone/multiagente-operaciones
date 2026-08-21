@@ -580,9 +580,10 @@ class ImpresionMixin:
                         self._log(f"⚠ Dorso {tipo}: archivo no encontrado ({ruta})")
                         continue
                     if n > 1 and sumatra:
-                        # Un solo trabajo con N copias (rápido)
+                        # Un solo trabajo con N copias en orden explícito
+                        secuencia = self._imp_secuencia_paginas(ruta, n) or f"{n}x,nocollate"
                         subprocess.run(
-                            [sumatra, "-print-to-default", "-print-settings", f"{n}x",
+                            [sumatra, "-print-to-default", "-print-settings", secuencia,
                              "-exit-when-done", ruta],
                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                         )
@@ -1077,7 +1078,8 @@ class ImpresionMixin:
         """Ruta al SumatraPDF portable (engines/sumatra/) o None si no está.
 
         SumatraPDF permite enviar N copias como UN solo trabajo de impresión
-        a nivel del driver (-print-settings "Nx"), igual que el diálogo manual.
+        con el orden de páginas explícito (-print-settings "1,1,2,2"),
+        igual de rápido que las copias del diálogo manual.
         """
         candidatos = []
         if getattr(sys, "frozen", False):
@@ -1089,6 +1091,28 @@ class ImpresionMixin:
             if c and os.path.isfile(c):
                 return c
         return None
+
+    def _imp_secuencia_paginas(self, ruta_pdf, copias):
+        """Secuencia literal de páginas para N copias sin intercalar.
+
+        Ej: 2 copias de un PDF de 2 páginas -> "1,1,2,2".
+        No depende del flag de collate del driver (algunos lo ignoran).
+
+        Returns:
+            str con la lista de páginas, o None si no se pudo leer el PDF.
+        """
+        try:
+            import fitz
+            with fitz.open(ruta_pdf) as doc:
+                total = doc.page_count
+            if total < 1 or copias < 1:
+                return None
+            paginas = []
+            for p in range(1, total + 1):
+                paginas.extend([str(p)] * copias)
+            return ",".join(paginas)
+        except Exception:
+            return None
 
     def _imp_enviar(self, ruta_archivo, impresora, descripcion, hojas=None, copias=1):
         """Envía un archivo a la impresora seleccionada. hojas=lista, copias=N."""
@@ -1106,13 +1130,16 @@ class ImpresionMixin:
             es_excel = ext in (".XLSX", ".XLS")
 
             # PDFs: un solo trabajo con N copias vía SumatraPDF (rápido).
-            # nocollate: los permisos de 2+ hojas salen 1,1,2,2 (no intercalado 1,2,1,2)
+            # Orden explícito de páginas (ej: "1,1,2,2"): garantiza copias no
+            # intercaladas aunque el driver ignore el flag de collate.
             if ext == ".PDF" and copias > 1:
                 sumatra = self._imp_sumatra_exe()
                 if sumatra:
+                    secuencia = self._imp_secuencia_paginas(ruta_archivo, copias)
+                    settings = secuencia or f"{copias}x,nocollate"
                     self._log(f"     → Impresora predeterminada ({copias} copias en un solo trabajo)")
                     subprocess.run(
-                        [sumatra, "-print-to-default", "-print-settings", f"{copias}x,nocollate",
+                        [sumatra, "-print-to-default", "-print-settings", settings,
                          "-exit-when-done", ruta_archivo],
                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                     )
