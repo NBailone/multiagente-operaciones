@@ -99,6 +99,15 @@ class PlanillasMixin:
             command=self._popup_planilla_carga,
         )
 
+        self.btn_carga_sistema = ctk.CTkButton(
+            btns_left, text="Carga Sistema",
+            image=self._icons["file-text"], compound="left",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34, width=_btn_width,
+            command=self._popup_carga_sistema,
+        )
+
         # Progress + Limpiar a la derecha
         right_frame = ctk.CTkFrame(toolbar, fg_color="transparent")
         right_frame.pack(side="right", padx=(0, 8), pady=4)
@@ -129,6 +138,7 @@ class PlanillasMixin:
             self.btn_agregar_guarda,
             self.btn_editar_excels,
             self.btn_planilla_carga,
+            self.btn_carga_sistema,
         ]
         for b in _toolbar_btns:
             b.grid(row=0, column=0)
@@ -521,6 +531,205 @@ class PlanillasMixin:
             text_color=Palette.TEXT_SECONDARY, corner_radius=6,
             command=popup.destroy,
         ).pack(side="right", padx=4)
+
+    def _popup_carga_sistema(self):
+        """Popup para generar CARGA SISTEMA <sufijo>.xlsx por carpeta.
+
+        Lee el Excel de contenedores de cada carpeta seleccionada y genera
+        la planilla con formato para SIMWEB (puerto de CARGA_SISTEMA.ps1).
+        """
+        if self.tarea_activa:
+            messagebox.showwarning("Agente ocupado", "Hay una tarea en ejecución. Espere a que finalice.")
+            return
+
+        escritorio = self._resolver_ruta("planillas_carga", "Desktop")
+        patron = re.compile(r"^\d{2}_\d{2}_\d{4}_\d+_.+$")
+
+        carpetas_encontradas = []
+        try:
+            for item in sorted(os.listdir(escritorio)):
+                ruta = os.path.join(escritorio, item)
+                if os.path.isdir(ruta) and patron.match(item):
+                    carpetas_encontradas.append((item, ruta))
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo leer el escritorio:\n{e}")
+            return
+
+        if not carpetas_encontradas:
+            messagebox.showinfo("Sin carpetas",
+                                "No se encontraron carpetas con formato\n"
+                                "DD_MM_AAAA_NNN_Nombre en el escritorio.")
+            return
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("Carga Sistema")
+        popup.geometry("600x400")
+        popup.configure(fg_color=Palette.BG_CARD)
+        popup.transient(self)
+        popup.lift()
+        popup.grab_set()
+        popup.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width() - 600) // 2
+        py = self.winfo_y() + (self.winfo_height() - 400) // 2
+        popup.geometry(f"600x400+{px}+{py}")
+
+        ctk.CTkLabel(
+            popup, text="CARGA SISTEMA",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=16, weight="bold"),
+            text_color=Palette.TEXT_PRIMARY,
+        ).pack(pady=(16, 8))
+
+        ctk.CTkLabel(
+            popup,
+            text="Genera CARGA SISTEMA <sufijo>.xlsx a partir del Excel de\ncontenedores de cada carpeta seleccionada:",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13),
+            text_color=Palette.TEXT_SECONDARY,
+            justify="left",
+        ).pack(anchor="w", padx=16, pady=(0, 6))
+
+        scroll = ctk.CTkScrollableFrame(
+            popup, fg_color=Palette.BG_TABLE, corner_radius=8,
+            border_width=1, border_color=Palette.BORDER,
+        )
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        checks = {}
+        for nombre, ruta_carp in carpetas_encontradas:
+            checks[nombre] = ctk.BooleanVar(value=False)
+
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=16, pady=(0, 12))
+
+        seleccionadas_rutas = []
+
+        def _obtener_seleccionadas():
+            seleccionadas_rutas.clear()
+            for nombre, ruta in carpetas_encontradas:
+                if checks[nombre].get():
+                    seleccionadas_rutas.append(ruta)
+
+        def _update_generar_btn(*_args):
+            any_selected = any(v.get() for v in checks.values())
+            btn_generar.configure(state="normal" if any_selected else "disabled")
+
+        def _seleccionar_todas():
+            for v in checks.values():
+                v.set(True)
+
+        def _borrar_seleccion():
+            for v in checks.values():
+                v.set(False)
+
+        ctk.CTkButton(
+            btn_frame, text="Todas", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_seleccionar_todas,
+        ).pack(side="left", padx=(0, 4))
+
+        ctk.CTkButton(
+            btn_frame, text="Ninguna", width=80, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=_borrar_seleccion,
+        ).pack(side="left", padx=4)
+
+        btn_generar = ctk.CTkButton(
+            btn_frame, text="Generar", width=140, height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
+            fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.WHITE, corner_radius=6,
+            state="disabled",
+            command=lambda: (_obtener_seleccionadas(),
+                             self._generar_carga_sistema_thread(popup, list(seleccionadas_rutas))),
+        )
+        btn_generar.pack(side="right", padx=4)
+
+        for nombre, var in checks.items():
+            var.trace_add("write", _update_generar_btn)
+            ctk.CTkCheckBox(
+                scroll, text=nombre, variable=var,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+                fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
+                text_color=Palette.TEXT_PRIMARY,
+            ).pack(anchor="w", padx=12, pady=4)
+
+        _update_generar_btn()
+
+        ctk.CTkButton(
+            btn_frame, text="Cancelar", width=100, height=34,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
+            text_color=Palette.TEXT_SECONDARY, corner_radius=6,
+            command=popup.destroy,
+        ).pack(side="right", padx=4)
+
+    def _generar_carga_sistema_thread(self, popup, carpetas_seleccionadas):
+        """Genera las planillas CARGA SISTEMA en hilo de fondo."""
+        if not carpetas_seleccionadas:
+            messagebox.showwarning("Incompleto", "Seleccioná al menos una carpeta.")
+            return
+
+        popup.destroy()
+
+        if self.tarea_activa:
+            return
+        self.tarea_activa = True
+        self._cancelar_tarea.clear()
+        self.btn_carga_sistema.configure(text="⏳  Procesando...", state="disabled")
+        self.btn_ejecutar_planillas.configure(state="disabled")
+        self.progress_planillas.set(0)
+        self.progress_planillas.configure(mode="indeterminate")
+        self.progress_planillas.start()
+        self._limpiar_log()
+        self._log("📋 Generando planillas CARGA SISTEMA")
+
+        def log_app(msg):
+            self.log_queue.put(f"[...] {msg}")
+
+        def worker():
+            from utils.carga_sistema import generar_lote
+            self._set_log_panel("planillas")
+            resultados = generar_lote(carpetas_seleccionadas, log=log_app)
+            errores = [f"{r['carpeta']}: {r['mensaje']}" for r in resultados if not r["ok"]]
+            total_archivos = sum(1 for r in resultados if r["ok"] and r["filas"] > 0)
+
+            resumen = f"[...] ✓ CARGA SISTEMA completado: {total_archivos}/{len(resultados)} archivo(s) generado(s)"
+            if errores:
+                resumen += f"\n[...] ⚠ Sin generar ({len(errores)}):"
+                for err in errores:
+                    resumen += f"\n[...]     • {err}"
+            self.log_queue.put(resumen)
+
+            def _mostrar_resumen():
+                if errores:
+                    messagebox.showwarning(
+                        "Carga Sistema",
+                        f"Generados: {total_archivos}/{len(resultados)}\n\nSin generar:\n" +
+                        "\n".join(f"• {e}" for e in errores),
+                    )
+                else:
+                    messagebox.showinfo(
+                        "Carga Sistema",
+                        f"✓ {total_archivos} planilla(s) CARGA SISTEMA generada(s)\n\n"
+                        + "\n".join(f"• {r['carpeta']}: {r['salida']} ({r['filas']} choferes)"
+                                    for r in resultados if r["ok"]),
+                    )
+
+            def _finalizar():
+                self.tarea_activa = False
+                self.btn_carga_sistema.configure(text="Carga Sistema", image=self._icons["file-text"],
+                                                 state="normal")
+                self.btn_ejecutar_planillas.configure(state="normal")
+                self.progress_planillas.stop()
+                self.progress_planillas.set(0)
+                _mostrar_resumen()
+
+            self.after(0, _finalizar)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _extraer_planilla_carga(self, folder_path):
         """Extrae la hoja 'planilla de carga' del primer .xlsx en la carpeta.
