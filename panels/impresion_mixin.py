@@ -722,7 +722,7 @@ class ImpresionMixin:
                     self.log_queue.put(f"[...] ⚠ Sellos MIC: guarda '{guarda}' no hallado en ninguna hoja")
                     wb.close(); return
                 wb.close()
-                impresora = self._detectar_impresoras()[0] if self._detectar_impresoras() else "Default"
+                impresora = self._imp_impresora_default()
                 self.log_queue.put(f"[...] 🖨 Sellos MIC: {guarda} → hoja '{hoja_encontrada}' ({copias} copias)")
                 self._imp_enviar(ruta_mic, impresora, f"  Sellos MIC - {guarda}", hojas=[hoja_encontrada], copias=copias)
             except Exception as e:
@@ -794,7 +794,7 @@ class ImpresionMixin:
                 wb = self._abrir_excel_seguro(ruta_crt)
                 hoja = wb.sheetnames[0]
                 wb.close()
-                impresora = self._detectar_impresoras()[0] if self._detectar_impresoras() else "Default"
+                impresora = self._imp_impresora_default()
                 self.log_queue.put(f"[...] 🖨 Sellos CRT: hoja '{hoja}' ({copias} copias)")
                 self._imp_enviar(ruta_crt, impresora, f"  Sellos CRT", hojas=[hoja], copias=copias)
             except Exception as e:
@@ -808,6 +808,18 @@ class ImpresionMixin:
             messagebox.showinfo("Sin selección", "Seleccione al menos una carpeta para imprimir.")
             return
         self._imp_ejecutar(seleccionadas)
+
+    def _imp_impresora_default(self):
+        """Nombre de la impresora predeterminada del sistema (instantáneo).
+
+        Reemplaza a _detectar_impresoras()[0]: no lanza PowerShell ni
+        congela la UI — y es la impresora que realmente se usa al imprimir.
+        """
+        try:
+            import win32print
+            return win32print.GetDefaultPrinter()
+        except Exception:
+            return "Impresora predeterminada"
 
     def _detectar_impresoras(self):
         """Devuelve lista de impresoras disponibles con nombre completo (Name on Port:)."""
@@ -864,7 +876,7 @@ class ImpresionMixin:
                     copias[key] = 2
             else:
                 copias[key] = 0
-        impresora = self._detectar_impresoras()[0] if self._detectar_impresoras() else "Default"
+        impresora = self._imp_impresora_default()
         self._log(f"IMPRESORA: {impresora}")
         self._log(f"Carpetas a procesar: {len(seleccionadas)}")
         self._log(f"Opciones: {', '.join(k for k, v in opciones.items() if v)}")

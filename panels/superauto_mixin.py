@@ -1,4 +1,4 @@
-"""SuperAutoMixin.
+﻿"""SuperAutoMixin.
 
 Legacy block extracted from ui_app.py. Mixed into the main App class; relies
 on attributes/methods living on the composed instance (_log, _set_log_panel,
@@ -119,7 +119,7 @@ class SuperAutoMixin:
         hacer_recibo   = cfg.get("recibo_ata", True)
         anio = datetime.now().strftime("%y")
         prefijo_permiso = f"{anio}069EC"
-        impresora = self._detectar_impresoras()[0] if self._detectar_impresoras() else "Default"
+        impresora = self._imp_impresora_default()
         total_ok = 0
 
         for ruta in carpetas:
