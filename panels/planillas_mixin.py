@@ -1271,38 +1271,69 @@ class PlanillasMixin:
 
         def worker():
             self._set_log_panel("planillas")
-            for ruta_carp in carpetas_seleccionadas:
-                if self._cancelar_tarea.is_set():
-                    self.log_queue.put("[...] ⚠ Tarea cancelada.")
-                    break
-                nombre_carp = os.path.basename(ruta_carp)
-                self.log_queue.put(f"[...]   📁 {nombre_carp}")
-
-                ruta_contenedores = None
+            clave = self._cfg_obtener("valores", "clave_pdf", "123")
+            excel_app = None
+            pythoncom = None
+            try:
+                # Una sola sesión de Excel para todo el lote (rápido en lotes)
+                import pythoncom as _pc
+                pythoncom = _pc
+                _pc.CoInitialize()
                 try:
-                    for archivo in os.listdir(ruta_carp):
-                        up = archivo.upper()
-                        if "CONTENEDORES" in up and (up.endswith(".XLSX") or up.endswith(".XLS")):
-                            ruta_contenedores = os.path.join(ruta_carp, archivo)
-                            break
-                except Exception as e:
-                    self.log_queue.put(f"[...]     ⚠ No se pudo leer: {e}")
-                    continue
+                    import win32com.client as _wc
+                    excel_app = _wc.DispatchEx("Excel.Application")
+                    excel_app.Visible = False
+                    excel_app.DisplayAlerts = False
+                except Exception:
+                    excel_app = None  # sin COM → cada archivo usa su método legacy
 
-                if not ruta_contenedores:
-                    self.log_queue.put(f"[...]     ⚠ Sin archivo Contenedores")
-                    continue
+                for ruta_carp in carpetas_seleccionadas:
+                    if self._cancelar_tarea.is_set():
+                        self.log_queue.put("[...] ⚠ Tarea cancelada.")
+                        break
+                    nombre_carp = os.path.basename(ruta_carp)
+                    self.log_queue.put(f"[...]   📁 {nombre_carp}")
 
-                archivo_nombre = os.path.basename(ruta_contenedores)
-                self.log_queue.put(f"[...]     📄 {archivo_nombre}")
+                    ruta_contenedores = None
+                    try:
+                        for archivo in os.listdir(ruta_carp):
+                            up = archivo.upper()
+                            if "CONTENEDORES" in up and (up.endswith(".XLSX") or up.endswith(".XLS")):
+                                ruta_contenedores = os.path.join(ruta_carp, archivo)
+                                break
+                    except Exception as e:
+                        self.log_queue.put(f"[...]     ⚠ No se pudo leer: {e}")
+                        continue
 
+                    if not ruta_contenedores:
+                        self.log_queue.put(f"[...]     ⚠ Sin archivo Contenedores")
+                        continue
+
+                    archivo_nombre = os.path.basename(ruta_contenedores)
+                    self.log_queue.put(f"[...]     📄 {archivo_nombre}")
+
+                    try:
+                        ok_guarda = self._escribir_guarda_en_archivo(
+                            ruta_contenedores, guarda_elegido, self.log_queue.put,
+                            excel_app=excel_app, clave=clave,
+                        )
+                        if not ok_guarda:
+                            self.log_queue.put(f"[...]     ⚠ 'Guarda' no hallada en col G")
+                        else:
+                            self.log_queue.put(f"[...]     ✓ '{guarda_elegido}' escrito correctamente")
+                    except Exception as e:
+                        self.log_queue.put(f"[...]     ⚠ Error: {e}")
+            finally:
                 try:
-                    if not self._escribir_guarda_en_archivo(ruta_contenedores, guarda_elegido, self.log_queue.put):
-                        self.log_queue.put(f"[...]     ⚠ 'Guarda' no hallada en col G")
-                    else:
-                        self.log_queue.put(f"[...]     ✓ '{guarda_elegido}' escrito correctamente")
-                except Exception as e:
-                    self.log_queue.put(f"[...]     ⚠ Error: {e}")
+                    if excel_app:
+                        excel_app.Quit()
+                except Exception:
+                    pass
+                try:
+                    if pythoncom:
+                        pythoncom.CoUninitialize()
+                except Exception:
+                    pass
 
             self.log_queue.put(f"[...] ✓ Guarda '{guarda_elegido}' completado.")
             self.after(0, self._guarda_done)

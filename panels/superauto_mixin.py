@@ -255,15 +255,57 @@ class SuperAutoMixin:
         return aplicados
 
     def _escribir_guarda_en_archivo(
-        self, ruta: str, guarda_nombre: str, log_func=None
+        self, ruta: str, guarda_nombre: str, log_func=None,
+        excel_app=None, clave: str = "123",
     ) -> bool:
         """Write guarda_nombre to column H in the CHOFER sheet of an Excel file.
 
-        Handles both .xls (Excel COM via win32com) and .xlsx (openpyxl) formats.
+        Si se pasa `excel_app` (sesión compartida de Excel), ambos formatos
+        (.xls/.xlsx) se procesan por COM sin relanzar Excel por archivo —
+        mucho más rápido en lotes. La apertura usa `clave` por si el workbook
+        tiene password (config valores.clave_pdf).
+        Sin sesión, comportamiento legacy: sesión propia para .xls y openpyxl
+        para .xlsx.
         Returns True if written, False if no 'GUARDA' found or no CHOFER sheet.
         """
         es_xls = ruta.lower().endswith(".xls") and not ruta.lower().endswith(".xlsx")
         escrito = False
+
+        if excel_app is not None:
+            # Camino rápido por lote: reusar la sesión de Excel existente
+            try:
+                try:
+                    wb = excel_app.Workbooks.Open(ruta, Password=clave)
+                except Exception:
+                    wb = excel_app.Workbooks.Open(ruta)
+                ws_chofer = None
+                for s in wb.Sheets:
+                    if "CHOFER" in str(s.Name).upper():
+                        ws_chofer = s
+                        break
+                if not ws_chofer:
+                    wb.Close(SaveChanges=False)
+                    if log_func:
+                        log_func("[...]   Hoja 'Choferes' no hallada")
+                    return False
+                protegida = bool(ws_chofer.ProtectContents)
+                if protegida:
+                    ws_chofer.Unprotect(Password=clave)
+                for row in range(2, 16):
+                    val = ws_chofer.Cells(row, 7).Value  # col 7 = G
+                    if val is not None and "GUARDA" in str(val).strip().upper():
+                        ws_chofer.Cells(row, 8).Value = guarda_nombre  # col 8 = H
+                        escrito = True
+                        break
+                if protegida:
+                    ws_chofer.Protect(Password=clave)
+                wb.Save()
+                wb.Close(SaveChanges=False)
+            except Exception as e:
+                if log_func:
+                    log_func(f"[...]     ⚠ Error: {e}")
+                return False
+            return escrito
 
         if es_xls:
             import pythoncom
