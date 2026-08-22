@@ -732,11 +732,137 @@ class PlanillasMixin:
         threading.Thread(target=worker, daemon=True).start()
 
     def _extraer_planilla_carga(self, folder_path):
-        """Extrae la hoja 'planilla de carga' del primer .xlsx en la carpeta.
+        """Extrae la hoja 'Planilla de Carga' del Excel de contenedores.
+
+        Camino rápido: copia nativa de Excel (COM) de la hoja a un libro nuevo.
+        Preserva estilos, merges y anchos sin cargar el libro completo ni
+        convertir .xls a temporal. Funciona igual para .xls y .xlsx, incluso
+        con clave de apertura (config valores.clave_pdf, default '123').
+        Si COM falla, cae al camino openpyxl (_extraer_planilla_carga_openpyxl).
 
         Returns:
             (success, message)
         """
+        source_path = self._buscar_archivo_origen(folder_path)
+        if not source_path:
+            return False, "No se encontró archivo .xlsx/.xls en la carpeta"
+
+        clave = self._cfg_obtener("valores", "clave_pdf", "123")
+
+        # Nombre de salida: PLANILLA DE CARGA_<partes[5:]>_....xlsx
+        partes = os.path.basename(folder_path).split("_")
+        sufijo = "_".join(partes[5:]) if len(partes) > 5 else ""
+        nombre_salida = f"PLANILLA DE CARGA_{sufijo}.xlsx" if sufijo else "PLANILLA DE CARGA.xlsx"
+        ruta_salida = os.path.join(folder_path, nombre_salida)
+
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        excel = None
+        wb_com = None
+        nuevo = None
+        try:
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            try:
+                wb_com = excel.Workbooks.Open(source_path, ReadOnly=True, Password=clave)
+            except Exception:
+                wb_com = excel.Workbooks.Open(source_path, ReadOnly=True)
+
+            hoja = None
+            for s in wb_com.Sheets:
+                if str(s.Name).strip().lower() == "planilla de carga":
+                    hoja = s
+                    break
+            if hoja is None:
+                wb_com.Close(SaveChanges=False)
+                wb_com = None
+                return False, "No se encontró la hoja 'Planilla de Carga'"
+
+            protegida = bool(hoja.ProtectContents)
+
+            # Copia nativa de la hoja a un libro nuevo (estilos/merges/anchos incluidos)
+            hoja.Copy()
+            nuevo = excel.ActiveWorkbook
+            ws = nuevo.Sheets(1)
+
+            # Fórmulas → valores cacheados (evita #REF! si se quitan hojas referenciadas).
+            # La copia hereda la protección de la hoja origen: desproteger para editar.
+            if protegida:
+                ws.Unprotect(Password=clave)
+            used = ws.UsedRange
+            _ = used.Value
+            used.Value = _
+
+            if protegida:
+                ws.Protect(Password=clave)
+
+            nuevo.SaveAs(ruta_salida, FileFormat=51)  # 51 = .xlsx
+            nuevo.Close(SaveChanges=False)
+            nuevo = None
+            wb_com.Close(SaveChanges=False)
+            wb_com = None
+            return True, nombre_salida
+        except pythoncom.com_error as e:
+            # Archivo de salida abierto en Excel es el caso más común
+            return False, (
+                f"No se pudo generar '{nombre_salida}'. "
+                f"¿Está abierto en Excel? Cerralo y reintentá. ({e})"
+            )
+        except Exception as e:
+            # Cualquier otro problema: camino openpyxl como red de seguridad
+            self._log(f"[...]     ⚠ Copia nativa falló ({e}); usando método alternativo...")
+            return self._extraer_planilla_carga_openpyxl(folder_path)
+        finally:
+            try:
+                if nuevo:
+                    nuevo.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if wb_com:
+                    wb_com.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if excel:
+                    excel.Quit()
+            except Exception:
+                pass
+            pythoncom.CoUninitialize()
+
+    def _buscar_archivo_origen(self, folder_path):
+        """Primer Excel de la carpeta con preferencia a *CONTENEDORES* (.xlsx > .xls).
+
+        Ignora temporales (~$) y salidas previas (PLANILLA DE CARGA*, CARGA SISTEMA*).
+        """
+        xlsx_preferido = xlsx_cualquiera = xls_preferido = xls_cualquiera = None
+        try:
+            archivos = os.listdir(folder_path)
+        except OSError:
+            return None
+        for archivo in archivos:
+            if archivo.startswith("~$"):
+                continue
+            up = archivo.upper()
+            if up.startswith(("PLANILLA DE CARGA", "CARGA SISTEMA")):
+                continue
+            ruta = os.path.join(folder_path, archivo)
+            if up.endswith(".XLSX"):
+                if "CONTENEDORES" in up:
+                    xlsx_preferido = ruta
+                if xlsx_cualquiera is None:
+                    xlsx_cualquiera = ruta
+            elif up.endswith(".XLS"):
+                if "CONTENEDORES" in up:
+                    xls_preferido = ruta
+                if xls_cualquiera is None:
+                    xls_cualquiera = ruta
+        return xlsx_preferido or xls_preferido or xlsx_cualquiera or xls_cualquiera
+
+    def _extraer_planilla_carga_openpyxl(self, folder_path):
+        """Camino alternativo (openpyxl celda por celda). Fallback si no hay COM."""
         try:
             archivos = os.listdir(folder_path)
         except Exception as e:
