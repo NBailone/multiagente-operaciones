@@ -45,6 +45,8 @@ a = Analysis(
         'numpy',
         'fitz',
         'procesar_tickets',
+        # pbkdf2_hmac vive en _hashlib (OpenSSL); sin él, el exe falla al cifrar
+        '_hashlib',
     ],
     hookspath=[],
     hooksconfig={},
