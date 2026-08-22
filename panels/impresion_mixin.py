@@ -1106,7 +1106,10 @@ class ImpresionMixin:
             str con la lista de páginas, o None si no se pudo leer el PDF.
         """
         try:
-            import fitz
+            try:
+                import pymupdf as fitz  # nombre actual del paquete (PyMuPDF 1.24+)
+            except ImportError:
+                import fitz  # fallback para versiones viejas
             with fitz.open(ruta_pdf) as doc:
                 total = doc.page_count
             if total < 1 or copias < 1:
