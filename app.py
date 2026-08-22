@@ -227,6 +227,40 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
 
         # Verificar contraseña maestra al iniciar, luego diagnóstico
         self.after(300, self._verificar_inicio)
+        # Precargar paneles en segundo plano: navegación instantánea después
+        self.after(1500, self._precargar_paneles)
+
+    def _precargar_paneles(self):
+        """Construye los paneles restantes en segundo plano, uno por tick,
+        para que la navegación por el menú sea instantánea desde el primer clic."""
+        orden = ["descargar", "impresion", "planillas", "cargar-datos",
+                 "correos", "backup", "ajustes"]
+        pendientes = [n for n in orden if n not in self._panel_frames]
+
+        def _paso():
+            if not pendientes:
+                return
+            nombre = pendientes.pop(0)
+            try:
+                if nombre == "impresion":
+                    self._panel_impresion()
+                elif nombre == "planillas":
+                    self._panel_planillas()
+                elif nombre == "descargar":
+                    self._panel_descargar()
+                elif nombre == "correos":
+                    self._panel_correos()
+                elif nombre == "backup":
+                    self._panel_backup()
+                elif nombre == "ajustes":
+                    self._panel_ajustes()
+                elif nombre == "cargar-datos":
+                    self._panel_cargar_datos()
+            except Exception as e:
+                print(f"[PRELOAD] Error construyendo panel {nombre}: {e}")
+            self.after(150, _paso)
+
+        _paso()
 
     def _centrar_ventana(self):
         """Centra la ventana en la pantalla actual al 80% del tamaño."""
@@ -749,10 +783,6 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         if self.panel_actual and self.panel_actual in self.logs_por_panel:
             self.logs_por_panel[self.panel_actual] = self._capturar_lineas_log()
 
-        # Ocultar el frame del panel actual (si existe)
-        if self.panel_actual and self.panel_actual in self._panel_frames:
-            self._panel_frames[self.panel_actual].pack_forget()
-
         # Construir el frame del panel destino si es primera vez
         if nombre not in self._panel_frames:
             if nombre == "impresion":
@@ -773,10 +803,14 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         if nombre == "cargar-datos":
             self._panel_cargar_datos()
 
-        # Mostrar el frame del panel destino
+        # Mostrar el panel destino apilándolo al frente (place+lift).
+        # Los paneles conviven superpuestos: navegar NO desmonta widgets,
+        # así el redibujado progresivo desaparece y el cambio es instantáneo.
         frame = self._panel_frames.get(nombre)
         if frame:
-            frame.pack(in_=self.panel_container, fill="both", expand=True)
+            if not frame.winfo_manager():  # primera vez: ubicarlo superpuesto
+                frame.place(in_=self.panel_container, relwidth=1, relheight=1)
+            frame.lift()
 
         # Reescanear carpetas al volver al panel de impresión
         if nombre == "impresion":
