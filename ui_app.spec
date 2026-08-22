@@ -47,6 +47,8 @@ a = Analysis(
         'procesar_tickets',
         # pbkdf2_hmac vive en _hashlib (OpenSSL); sin él, el exe falla al cifrar
         '_hashlib',
+        # win32com.client.DispatchEx importa esto dinámicamente en runtime
+        'win32timezone',
     ],
     hookspath=[],
     hooksconfig={},
