@@ -692,42 +692,60 @@ class PlanillasMixin:
         def worker():
             from utils.carga_sistema import generar_lote
             self._set_log_panel("planillas")
-            resultados = generar_lote(carpetas_seleccionadas, log=log_app)
-            errores = [f"{r['carpeta']}: {r['mensaje']}" for r in resultados if not r["ok"]]
-            total_archivos = sum(1 for r in resultados if r["ok"] and r["filas"] > 0)
+            # Siempre definir _finalizar antes para poder llamarlo en finally
+            resultados = []
+            errores = []
+            total_archivos = 0
 
-            resumen = f"[...] ✓ CARGA SISTEMA completado: {total_archivos}/{len(resultados)} archivo(s) generado(s)"
-            if errores:
-                resumen += f"\n[...] ⚠ Sin generar ({len(errores)}):"
-                for err in errores:
-                    resumen += f"\n[...]     • {err}"
-            self.log_queue.put(resumen)
-
-            def _mostrar_resumen():
-                if errores:
+            def _mostrar_resumen_local(_resultados, _errores, _total):
+                if _errores:
                     messagebox.showwarning(
                         "Carga Sistema",
-                        f"Generados: {total_archivos}/{len(resultados)}\n\nSin generar:\n" +
-                        "\n".join(f"• {e}" for e in errores),
+                        f"Generados: {_total}/{len(_resultados)}\n\nSin generar:\n" +
+                        "\n".join(f"• {e}" for e in _errores),
                     )
                 else:
                     messagebox.showinfo(
                         "Carga Sistema",
-                        f"✓ {total_archivos} planilla(s) CARGA SISTEMA generada(s)\n\n"
+                        f"✓ {_total} planilla(s) CARGA SISTEMA generada(s)\n\n"
                         + "\n".join(f"• {r['carpeta']}: {r['salida']} ({r['filas']} choferes)"
-                                    for r in resultados if r["ok"]),
+                                    for r in _resultados if r["ok"]),
                     )
 
             def _finalizar():
                 self.tarea_activa = False
-                self.btn_carga_sistema.configure(text="Carga Sistema", image=self._icons["file-text"],
-                                                 state="normal")
-                self.btn_ejecutar_planillas.configure(state="normal")
-                self.progress_planillas.stop()
-                self.progress_planillas.set(0)
-                _mostrar_resumen()
+                try:
+                    self.btn_carga_sistema.configure(text="Carga Sistema", image=self._icons["file-text"],
+                                                     state="normal")
+                    self.btn_ejecutar_planillas.configure(state="normal")
+                    self.progress_planillas.stop()
+                    self.progress_planillas.set(0)
+                except Exception:
+                    pass
+                # mostrar resumen si corresponde
+                try:
+                    if resultados or errores:
+                        _mostrar_resumen_local(resultados, errores, total_archivos)
+                except Exception:
+                    pass
 
-            self.after(0, _finalizar)
+            try:
+                resultados = generar_lote(carpetas_seleccionadas, log=log_app)
+                errores = [f"{r['carpeta']}: {r['mensaje']}" for r in resultados if not r["ok"]]
+                total_archivos = sum(1 for r in resultados if r["ok"] and r["filas"] > 0)
+
+                resumen = f"[...] ✓ CARGA SISTEMA completado: {total_archivos}/{len(resultados)} archivo(s) generado(s)"
+                if errores:
+                    resumen += f"\n[...] ⚠ Sin generar ({len(errores)}):"
+                    for err in errores:
+                        resumen += f"\n[...]     • {err}"
+                self.log_queue.put(resumen)
+            except Exception as e:
+                import traceback
+                self.log_queue.put(f"[...] ⚠ Error inesperado en Carga Sistema: {e}")
+                self.log_queue.put(f"[...] {traceback.format_exc()}")
+            finally:
+                self.after(0, _finalizar)
 
         threading.Thread(target=worker, daemon=True).start()
 
