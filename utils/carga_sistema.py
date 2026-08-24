@@ -105,29 +105,33 @@ def _abrir_libro(ruta):
                     filas.append((r + 1, celdas))
             return filas
 
-        return book.sheet_names(), leer
+        return book.sheet_names(), leer, None
 
     wb = openpyxl.load_workbook(ruta, data_only=True, read_only=True)
 
     def leer(nombre):
         ws = wb[nombre]
         filas = []
-        for fila in ws.iter_rows():
+        for idx, fila in enumerate(ws.iter_rows(), 1):
             celdas = {}
             for cell in fila:
                 if cell.value is None:
                     continue
-                letra = openpyxl.utils.get_column_letter(cell.column)
+                # EmptyCell en read_only no tiene row, usar atributo column si existe
+                try:
+                    col_idx = cell.column
+                except AttributeError:
+                    continue
+                letra = openpyxl.utils.get_column_letter(col_idx)
                 if isinstance(cell.value, datetime):
                     celdas[letra + "__fecha"] = cell.value
                 else:
                     celdas[letra] = cell.value
             if celdas:
-                filas.append((cell.row if fila else 0, celdas))
-        wb.close()
+                filas.append((idx, celdas))
         return filas
 
-    return wb.sheetnames, leer
+    return wb.sheetnames, leer, wb
 
 
 def _siguiente_no_vacio(celdas, letra):
@@ -216,11 +220,20 @@ def generar_carga_sistema(ruta_carpeta, log=None):
     res["origen"] = os.path.basename(origen)
     log(f"Archivo: {res['origen']}")
 
-    hojas, leer = _abrir_libro(origen)
+    # _abrir_libro ahora retorna (hojas, leer, wb) — wb puede ser None para .xls
+    _abrir_res = _abrir_libro(origen)
+    if len(_abrir_res) == 3:
+        hojas, leer, _wb_carga = _abrir_res
+    else:  # compatibilidad por si algún caller viejo
+        hojas, leer = _abrir_res
+        _wb_carga = None
 
     # --- Hoja Choferes -------------------------------------------------------
     nombre_ch = next((h for h in hojas if h.lower().startswith("chof")), None)
     if not nombre_ch:
+        if _wb_carga is not None:
+            try: _wb_carga.close()
+            except Exception: pass
         res["mensaje"] = "El Excel no tiene hoja 'Choferes'."
         return res
     filas_ch = leer(nombre_ch)
@@ -236,6 +249,9 @@ def generar_carga_sistema(ruta_carpeta, log=None):
     ])
     faltantes = [k for k in ("PRECINTO", "TRACTOR", "SEMI", "CONTENEDOR", "NOMBRE", "DNI") if k not in map_ch]
     if faltantes:
+        if _wb_carga is not None:
+            try: _wb_carga.close()
+            except Exception: pass
         res["mensaje"] = f"No encontré columnas {faltantes} en hoja Choferes."
         return res
 
@@ -283,9 +299,19 @@ def generar_carga_sistema(ruta_carpeta, log=None):
     # --- Hoja Continuación ---------------------------------------------------
     nombre_ct = next((h for h in hojas if re.match(r"hoja continu", h.lower())), None)
     if not nombre_ct:
+        if _wb_carga is not None:
+            try: _wb_carga.close()
+            except Exception: pass
         res["mensaje"] = "El Excel no tiene hoja 'Hoja Continuacion'."
         return res
-    filas_ct = leer(nombre_ct)
+    try:
+        filas_ct = leer(nombre_ct)
+    except Exception as e:
+        if _wb_carga is not None:
+            try: _wb_carga.close()
+            except Exception: pass
+        res["mensaje"] = f"Error leyendo Hoja Continuacion: {e}"
+        return res
 
     _, map_ct = _mapear_columnas(filas_ct, [
         ("ANCLA", r"CONTENEDOR"),
@@ -296,6 +322,9 @@ def generar_carga_sistema(ruta_carpeta, log=None):
     ])
     faltantes = [k for k in ("CONTENEDOR", "NETO", "BRUTO") if k not in map_ct]
     if faltantes:
+        if _wb_carga is not None:
+            try: _wb_carga.close()
+            except Exception: pass
         res["mensaje"] = f"No encontré columnas {faltantes} en Hoja Continuacion."
         return res
 
@@ -342,9 +371,25 @@ def generar_carga_sistema(ruta_carpeta, log=None):
                              ch["Contenedor"], ch["Nombre"], ch["Cuit"], kg_neto, bruto])
 
     # --- Nombre de salida ----------------------------------------------------
+    # Usa PE ya extraído arriba (pe). Últimos 4 dígitos + letra (789D→0789D, 1000789D→0789D, 26069EC01000789D→0789D)
     base = os.path.splitext(os.path.basename(origen))[0]
-    m = re.search(r"(\d+)\s*T", os.path.basename(origen))
-    sufijo = m.group(1) + "T" if m else base
+    pe_clean = _celda_str(pe).strip().upper() if 'pe' in locals() else ""
+    m = re.search(r"(\d+)\s*([A-Z])?\s*$", pe_clean) if pe_clean else None
+    if m and m.group(1):
+        num = m.group(1)
+        letra = m.group(2) or ""
+        num4 = num.zfill(4)[-4:]  # últimos 4, con ceros si <4 (789→0789, 00789→0789, 1000789→0789)
+        sufijo = f"{num4}{letra}"
+    else:
+        # fallback: último bloque del nombre de archivo si PE vacío
+        mf = re.search(r"(\d+)\s*([A-Z])?\s*$", base)
+        if mf and mf.group(1):
+            numf = mf.group(1)
+            letraf = mf.group(2) or ""
+            num4f = numf.zfill(4)[-4:]
+            sufijo = f"{num4f}{letraf}"
+        else:
+            sufijo = base
     out_name = f"CARGA SISTEMA {sufijo}.xlsx"
     out_path = os.path.join(ruta_carpeta, out_name)
 
@@ -366,6 +411,9 @@ def generar_carga_sistema(ruta_carpeta, log=None):
         log(f"AVISO: {a}")
 
     if not salida_filas:
+        if _wb_carga is not None:
+            try: _wb_carga.close()
+            except Exception: pass
         res["ok"] = True
         res["filas"] = 0
         res["mensaje"] = "No se encontraron choferes con DNI en la hoja Choferes; no se generó nada."
@@ -454,6 +502,10 @@ def generar_carga_sistema(ruta_carpeta, log=None):
                 ws[f"{letra}{fila}"].alignment = centro
         fila += 1
 
+    # cerrar workbook origen (read_only) antes de escribir salida
+    if _wb_carga is not None:
+        try: _wb_carga.close()
+        except Exception: pass
     try:
         wb.save(out_path)
     except PermissionError:
