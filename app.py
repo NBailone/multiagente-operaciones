@@ -32,6 +32,9 @@ from copy import copy
 import zipfile
 import xml.etree.ElementTree as ET
 from PIL import Image
+import hashlib
+import hmac
+import base64
 
 # ── Auto-install UI dependencies ──────────────────────────────────────────
 def _instalar_deps_ui():
@@ -1907,16 +1910,31 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         except Exception as e:
             self._log(f"ERROR al guardar configuración: {e}")
 
+    @staticmethod
+    def _pbkdf2_sha256(password, salt, iterations, dklen):
+        try:
+            return hashlib.pbkdf2_hmac('sha256', password, salt, iterations, dklen)
+        except AttributeError:
+            derived = b''
+            block_index = 1
+            while len(derived) < dklen:
+                u = hmac.new(password, salt + block_index.to_bytes(4, 'big'), hashlib.sha256).digest()
+                t = int.from_bytes(u, 'big')
+                for _ in range(iterations - 1):
+                    u = hmac.new(password, u, hashlib.sha256).digest()
+                    t ^= int.from_bytes(u, 'big')
+                derived += t.to_bytes(32, 'big')
+                block_index += 1
+            return derived[:dklen]
+
     def _encrypt_val(self, value, key):
         if not value:
             return ""
         if value.startswith("enc::"):
             return value
-        import hashlib
-        import base64
         try:
             salt = os.urandom(16)
-            derived = hashlib.pbkdf2_hmac('sha256', key.encode('utf-8'), salt, 10000, dklen=len(value))
+            derived = self._pbkdf2_sha256(key.encode('utf-8'), salt, 10000, len(value))
             encrypted = bytes(a ^ b for a, b in zip(value.encode('utf-8'), derived))
             payload = base64.b64encode(salt + encrypted).decode('utf-8')
             return f"enc::{payload}"
@@ -1927,8 +1945,6 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
     def _decrypt_val(self, value, key):
         if not value or not value.startswith("enc::"):
             return value
-        import hashlib
-        import base64
         try:
             payload = value[5:]
             data = base64.b64decode(payload.encode('utf-8'))
@@ -1936,7 +1952,7 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
                 return value
             salt = data[:16]
             encrypted = data[16:]
-            derived = hashlib.pbkdf2_hmac('sha256', key.encode('utf-8'), salt, 10000, dklen=len(encrypted))
+            derived = self._pbkdf2_sha256(key.encode('utf-8'), salt, 10000, len(encrypted))
             decrypted = bytes(a ^ b for a, b in zip(encrypted, derived))
             return decrypted.decode('utf-8')
         except Exception as e:

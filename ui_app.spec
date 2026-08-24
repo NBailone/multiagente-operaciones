@@ -45,7 +45,10 @@ a = Analysis(
         'numpy',
         'fitz',
         'procesar_tickets',
-        # pbkdf2_hmac vive en _hashlib (OpenSSL); sin él, el exe falla al cifrar
+        # pbkdf2_hmac vive en _hashlib (extensión C con OpenSSL). El hiddenimport
+        # NO alcanza solo: PyInstaller puede colectar un libcrypto-3.dll
+        # incompatible (ej. el de engines/tesseract) y _hashlib falla con
+        # WinError 127. El fix real es fix_openssl_dlls.py, corrido por build.ps1.
         '_hashlib',
         # win32com.client.DispatchEx importa esto dinámicamente en runtime
         'win32timezone',
@@ -70,7 +73,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=['_hashlib.pyd', 'libcrypto-3.dll', 'libssl-3.dll'],
     runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=True,
@@ -92,6 +95,6 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    upx_exclude=[],
+    upx_exclude=['_hashlib.pyd', 'libcrypto-3.dll', 'libssl-3.dll'],
     name='Sistema_Automatizacion',
 )
