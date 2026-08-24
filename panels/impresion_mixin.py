@@ -580,20 +580,62 @@ class ImpresionMixin:
                         self._log(f"⚠ Dorso {tipo}: archivo no encontrado ({ruta})")
                         continue
                     if sumatra:
-                        # Un solo trabajo con N copias + shrink (respeta formato, evita corte)
+                        # Un solo trabajo con N copias: escala configurable (default 92%)
                         secuencia = self._imp_secuencia_paginas(
                             ruta, n,
                             intercalar=self._cfg_obtener_docs("intercalar", False),
                         ) or f"{n}x,nocollate"
-                        if "shrink" not in secuencia and "fit" not in secuencia and "noscale" not in secuencia:
-                            settings = f"{secuencia},shrink"
-                        else:
-                            settings = secuencia
-                        subprocess.run(
-                            [sumatra, "-print-to-default", "-print-settings", settings,
-                             "-exit-when-done", ruta],
-                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
-                        )
+                        escala_pct = self._cfg_obtener_docs("escala_pdf", 92)
+                        if escala_pct < 100:
+                            # Generar PDF temporal escalado + noscale,center
+                            escala = escala_pct / 100.0
+                            tmp_pdf = self._imp_preparar_pdf(ruta, escala)
+                            if tmp_pdf:
+                                ruta_print = tmp_pdf
+                                if "noscale" not in secuencia and "fit" not in secuencia and "shrink" not in secuencia:
+                                    settings = f"{secuencia},noscale,center,monochrome"
+                                else:
+                                    settings = secuencia.replace("fit", "noscale").replace("shrink", "noscale")
+                                    if "noscale" not in settings:
+                                        settings = f"{settings},noscale"
+                                    if "center" not in settings:
+                                        settings = f"{settings},center"
+                                    if "color" not in settings:
+                                        settings = f"{settings},color"
+                                self._log(f"     → Dorso {tipo}: {n} copias, escala {escala_pct}%, noscale,center")
+                                try:
+                                    subprocess.run(
+                                        [sumatra, "-print-to-default", "-print-settings", settings,
+                                         "-exit-when-done", ruta_print],
+                                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                                    )
+                                finally:
+                                    try: os.unlink(tmp_pdf)
+                                    except Exception: pass
+                            else:
+                                self._log(f"     → Dorso {tipo}: falló temporal, usando fit,center")
+                                escala_pct = 100  # fallback
+                        if escala_pct >= 100:
+                            # escala 100% o fallback: fit,center directo
+                            if "fit" not in secuencia and "shrink" not in secuencia and "noscale" not in secuencia:
+                                settings = f"{secuencia},fit,center,monochrome"
+                            else:
+                                settings = secuencia.replace("shrink", "fit").replace("noscale", "fit")
+                                if "fit" not in settings:
+                                    settings = f"{settings},fit"
+                                if "center" not in settings:
+                                    settings = f"{settings},center"
+                                if "monochrome" not in settings:
+                                    settings = f"{settings},monochrome"
+                            self._log(f"     → Dorso {tipo}: {n} copias, fit,center")
+                            try:
+                                subprocess.run(
+                                    [sumatra, "-print-to-default", "-print-settings", settings,
+                                     "-exit-when-done", ruta],
+                                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                                )
+                            except Exception as e:
+                                self._log(f"     → ERROR SumatraPDF dorso: {e}")
                     else:
                         for copia in range(n):
                             os.startfile(ruta, "print")
@@ -906,16 +948,10 @@ class ImpresionMixin:
         try:
             for ruta in seleccionadas:
                 nombre = os.path.basename(ruta)
-                self._log(f"Procesando: {nombre}")
-                self._log(f"  Carpeta: {ruta}")
+                self._log(f"📁 {nombre}")
                 archivos = sorted(os.listdir(ruta))
 
-                # Listar todo lo que hay en la carpeta
-                self._log(f"  Archivos en la carpeta ({len(archivos)}):")
-                for a in archivos:
-                    self._log(f"    · {a}")
-
-                # Detectar archivos por tipo
+                # Detectar archivos por tipo (sin log verboso — solo impresos)
                 sobres = [a for a in archivos if "CONTENEDORES" in a.upper() and (a.upper().endswith(".XLSX") or a.upper().endswith(".XLS"))]
                 permisos = [a for a in archivos if a.upper().startswith(prefijo_permiso) and a.upper().endswith(".PDF")]
                 # Buscar Hoja de Ruta: flexible, que contenga "HOJA" y "RUTA" (no requiere "DE")
@@ -925,8 +961,6 @@ class ImpresionMixin:
                 hojas_ruta_internas = []
                 if not hojas_ruta:
                     hojas_ruta_internas = self._imp_buscar_hoja_ruta_interna(ruta, archivos, excluir=sobres)
-                    if hojas_ruta_internas:
-                        self._log(f"  Hoja de Ruta hallada por nombre de hoja interna: {hojas_ruta_internas}")
 
                 # Detectar hojas Recibo ATA: nombres exactos
                 nombres_ata = ["RECIBO ATA"] + [f"RECIBO ATA {i}" for i in range(2, 9)]
@@ -949,8 +983,6 @@ class ImpresionMixin:
                         except Exception:
                             pass
                 cant_choferes = len(hojas_ata) if hojas_ata else 1
-
-                self._log(f"  Detectado: Sobre={sobres}, Permiso={permisos}, HojaRuta={hojas_ruta}, RecibosATA(hojas)={hojas_ata}, Choferes={cant_choferes}")
 
                 # 1. Sobre: imprimir SOLO la hoja "SOBRE"
                 if opciones.get("sobre", True):
@@ -1141,6 +1173,47 @@ class ImpresionMixin:
         except Exception:
             return None
 
+    def _imp_preparar_pdf(self, ruta_pdf, escala=0.92):
+        """Crea PDF temporal escalado al % indicado centrado (sin hairlines).
+        
+        escala: 0.85-1.0 (ej: 0.92 = 92%). Retorna ruta temporal o None si falla.
+        """
+        try:
+            try:
+                import pymupdf as fitz
+            except ImportError:
+                try:
+                    import fitz
+                except ImportError:
+                    return None
+            import tempfile
+            doc = fitz.open(ruta_pdf)
+            if doc.page_count == 0:
+                try: doc.close()
+                except Exception: pass
+                return None
+            
+            new_doc = fitz.open()
+            for i, page in enumerate(doc):
+                src_rect = page.rect
+                new_page = new_doc.new_page(width=src_rect.width, height=src_rect.height)
+                new_w = src_rect.width * escala
+                new_h = src_rect.height * escala
+                x0 = (src_rect.width - new_w) / 2
+                y0 = (src_rect.height - new_h) / 2
+                dst_rect = fitz.Rect(x0, y0, x0 + new_w, y0 + new_h)
+                new_page.show_pdf_page(dst_rect, doc, i)
+            fd, tmp_path = tempfile.mkstemp(suffix=".__scaled__.pdf")
+            os.close(fd)
+            new_doc.save(tmp_path, garbage=0, deflate=False)
+            try: new_doc.close()
+            except Exception: pass
+            try: doc.close()
+            except Exception: pass
+            return tmp_path
+        except Exception:
+            return None
+
     def _imp_enviar(self, ruta_archivo, impresora, descripcion, hojas=None, copias=1):
         """Envía un archivo a la impresora seleccionada. hojas=lista, copias=N."""
         nombre_archivo = os.path.basename(ruta_archivo)
@@ -1156,10 +1229,7 @@ class ImpresionMixin:
             ext = os.path.splitext(ruta_archivo)[1].upper()
             es_excel = ext in (".XLSX", ".XLS")
 
-            # PDFs: un solo trabajo vía SumatraPDF con escala "shrink"
-            # (respeta formato, solo achica si excede área imprimible — no corta).
-            # Orden explícito de páginas (ej: "1,1,2,2"): garantiza copias no
-            # intercaladas aunque el driver ignore el flag de collate.
+            # PDFs: SumatraPDF con escala configurable (default 92% = Adobe Ajustar)
             if ext == ".PDF":
                 sumatra = self._imp_sumatra_exe()
                 if sumatra:
@@ -1167,17 +1237,57 @@ class ImpresionMixin:
                         ruta_archivo, copias,
                         intercalar=self._cfg_obtener_docs("intercalar", False))
                     base = secuencia or f"{copias}x,nocollate"
-                    # shrink = solo reduce si es grande, respeta formato
-                    if "shrink" not in base and "fit" not in base and "noscale" not in base:
-                        settings = f"{base},shrink"
+                    # Leer escala de config (85-100, default 92)
+                    escala_pct = self._cfg_obtener_docs("escala_pdf", 92)
+                    if escala_pct < 100:
+                        # Generar PDF temporal escalado + noscale,center
+                        escala = escala_pct / 100.0
+                        tmp_pdf = self._imp_preparar_pdf(ruta_archivo, escala)
+                        if tmp_pdf:
+                            ruta_print = tmp_pdf
+                            if "noscale" not in base and "fit" not in base and "shrink" not in base:
+                                settings = f"{base},noscale,center,color"
+                            else:
+                                settings = base.replace("fit", "noscale").replace("shrink", "noscale")
+                                if "noscale" not in settings:
+                                    settings = f"{settings},noscale"
+                                if "center" not in settings:
+                                    settings = f"{settings},center"
+                                if "monochrome" not in settings:
+                                    settings = f"{settings},monochrome"
+                            self._log(f"     → Impresora predeterminada ({copias} copias, escala {escala_pct}%, noscale,center)")
+                            try:
+                                subprocess.run(
+                                    [sumatra, "-print-to-default", "-print-settings", settings,
+                                     "-exit-when-done", ruta_print],
+                                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                                )
+                            finally:
+                                try: os.unlink(tmp_pdf)
+                                except Exception: pass
+                            return True
+                        # Si falla temporal, caer a fit,center
+                        self._log(f"     → Falló temporal, usando fit,center")
+                    # escala 100% o fallback: fit,center directo
+                    if "fit" not in base and "shrink" not in base and "noscale" not in base:
+                        settings = f"{base},fit,center,monochrome"
                     else:
-                        settings = base
-                    self._log(f"     → Impresora predeterminada ({copias} copias, shrink)")
-                    subprocess.run(
-                        [sumatra, "-print-to-default", "-print-settings", settings,
-                         "-exit-when-done", ruta_archivo],
-                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
-                    )
+                        settings = base.replace("shrink", "fit").replace("noscale", "fit")
+                        if "fit" not in settings:
+                            settings = f"{settings},fit"
+                        if "center" not in settings:
+                            settings = f"{settings},center"
+                        if "color" not in settings:
+                            settings = f"{settings},color"
+                    self._log(f"     → Impresora predeterminada ({copias} copias, fit,center)")
+                    try:
+                        subprocess.run(
+                            [sumatra, "-print-to-default", "-print-settings", settings,
+                             "-exit-when-done", ruta_archivo],
+                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                        )
+                    except Exception as e:
+                        self._log(f"     → ERROR SumatraPDF: {e}")
                     return True
                 self._log(f"     → SumatraPDF no disponible: enviando sin control de escala (puede cortarse)")
 

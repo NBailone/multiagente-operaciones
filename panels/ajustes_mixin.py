@@ -246,23 +246,35 @@ class AjustesMixin:
 
     # ── TAB: CORREO ──────────────────────────────────────────────────
     def _ajustes_tab_correo(self, parent):
-        self._ajustes_seccion(parent, "Credenciales IMAP")
+        # Contenedor horizontal: 2 columnas - Credenciales a la izquierda, Destinatarios a la derecha
+        split = ctk.CTkFrame(parent, fg_color="transparent")
+        split.pack(fill="x", padx=10, pady=(4, 0))
+
+        # ── Columna Izquierda: Credenciales IMAP ─────────────────────────────
+        col_izq = ctk.CTkFrame(split, fg_color="transparent")
+        col_izq.pack(side="left", fill="y", padx=(4, 8))
+
+        self._ajustes_seccion(col_izq, "Credenciales IMAP")
         self._ent_correo_usuario = self._ajustes_row(
-            parent, "Usuario (email):", self._cfg_obtener_correo("usuario", ""), width=300)
+            col_izq, "Usuario (email):", self._cfg_obtener_correo("usuario", ""), width=300)
         self._ent_correo_password = self._ajustes_row(
-            parent, "Contraseña:", self._cfg_obtener_correo("password", ""),
+            col_izq, "Contraseña:", self._cfg_obtener_correo("password", ""),
             show="*", width=240, toggle_pw=True)
         self._ent_correo_imap = self._ajustes_row(
-            parent, "Servidor IMAP:", self._cfg_obtener_correo("imap_server", IMAP_SERVER), width=280)
+            col_izq, "Servidor IMAP:", self._cfg_obtener_correo("imap_server", IMAP_SERVER), width=280)
         self._ent_correo_puerto = self._ajustes_row(
-            parent, "Puerto IMAP:", str(self._cfg_obtener_correo("imap_puerto", PUERTO_IMAP)), width=80)
+            col_izq, "Puerto IMAP:", str(self._cfg_obtener_correo("imap_puerto", PUERTO_IMAP)), width=80)
         self._sent_correo_remitente_papeles = self._ajustes_row(
-            parent, "Remitente Papeles (filtro):", self._cfg_obtener_correo("remitente_papeles", ""), width=280)
+            col_izq, "Remitente Papeles (filtro):", self._cfg_obtener_correo("remitente_papeles", ""), width=280)
 
-        self._ajustes_seccion(parent, "Destinatarios — Planillas de Carga")
+        # ── Columna Derecha: Destinatarios (apilados verticalmente) ─────────────
+        col_der = ctk.CTkFrame(split, fg_color="transparent")
+        col_der.pack(side="left", fill="both", expand=True, padx=(8, 4))
+
+        self._ajustes_seccion(col_der, "Destinatarios — Planillas de Carga")
         default_grupal = "\n".join(self._cfg_obtener_correo("destinatarios_grupal", DESTINATARIOS_GRUPAL))
         self._ajustes_texto_grupal = ctk.CTkTextbox(
-            parent, height=100, width=400,
+            col_der, height=100, width=400,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4, border_width=1,
@@ -270,10 +282,10 @@ class AjustesMixin:
         self._ajustes_texto_grupal.insert("1.0", default_grupal)
         self._ajustes_texto_grupal.pack(anchor="w", padx=14, pady=(2, 8))
 
-        self._ajustes_seccion(parent, "Destinatarios — Correo Individual")
+        self._ajustes_seccion(col_der, "Destinatarios — Correo Individual")
         default_ind = "\n".join(self._cfg_obtener_correo("destinatarios_individual", DESTINATARIOS_INDIVIDUAL))
         self._ajustes_texto_ind = ctk.CTkTextbox(
-            parent, height=70, width=400,
+            col_der, height=70, width=400,
             font=ctk.CTkFont(family=FONT_FAMILY, size=11),
             fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
             text_color=Palette.TEXT_PRIMARY, corner_radius=4, border_width=1,
@@ -281,13 +293,13 @@ class AjustesMixin:
         self._ajustes_texto_ind.insert("1.0", default_ind)
         self._ajustes_texto_ind.pack(anchor="w", padx=14, pady=(2, 8))
 
-        self._ajustes_seccion(parent, "Remitente Balanza")
+        self._ajustes_seccion(col_der, "Remitente Balanza")
         self._ent_remitente_balanza = self._ajustes_row(
-            parent, "Remitente Balanza:", self.config.get("correo", {}).get("remitente_balanza", ""), width=300)
+            col_der, "Remitente Balanza:", self.config.get("correo", {}).get("remitente_balanza", ""), width=300)
 
     # ── TAB: DOCUMENTOS ──────────────────────────────────────────────
     def _ajustes_tab_documentos(self, parent):
-        # Contenedor horizontal: izquierda (dorsos) | derecha (copias)
+        # Contenedor horizontal: izquierda (dorsos) | centro (copias) | derecha (ajuste pdf)
         split = ctk.CTkFrame(parent, fg_color="transparent")
         split.pack(fill="x", padx=10, pady=(4, 0))
 
@@ -303,7 +315,7 @@ class AjustesMixin:
         self._ent_dorso_pe = self._ajustes_row(
             col_izq, "Dorso PE:", str(self._cfg_obtener_docs("dorso_pe", 2)), width=70)
 
-        # ── Columna Derecha: Copias ──────────────────────────────────
+        # ── Columna Centro: Copias ──────────────────────────────────
         col_der = ctk.CTkFrame(split, fg_color="transparent")
         col_der.pack(side="left", fill="y", padx=(8, 4))
 
@@ -315,9 +327,18 @@ class AjustesMixin:
         self._ent_sobre = self._ajustes_row(
             col_der, "Sobre (Planilla de Carga):", str(self._cfg_obtener_docs("sobre", 1)), width=70)
 
+        # ── Columna Derecha: Ajuste PDF ──────────────────────────────
+        col_pdf = ctk.CTkFrame(split, fg_color="transparent")
+        col_pdf.pack(side="left", fill="y", padx=(8, 4))
+
+        self._ajustes_seccion(col_pdf, "Ajuste PDF")
+        self._ent_escala_pdf = self._ajustes_row(
+            col_pdf, "Escala (%):", str(self._cfg_obtener_docs("escala_pdf", 92)), width=70,
+            extra="85-100. 92 = Adobe Ajustar con aire. 100 = sin achicar")
+
         # Intercalado de copias múltiples (permisos/dorsos PDF)
         self._chk_intercalar = ctk.CTkCheckBox(
-            col_der, text="Intercalar copias",
+            col_pdf, text="Intercalar copias",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
@@ -327,7 +348,7 @@ class AjustesMixin:
             self._chk_intercalar.select()
         self._chk_intercalar.pack(anchor="w", padx=14, pady=(8, 0))
         ctk.CTkLabel(
-            col_der,
+            col_pdf,
             text="Marcado: 1,2,1,2 (juego completo por copia)\nDesmarcado: 1,1,2,2 (cada hoja junta)",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=Palette.TEXT_MUTED, anchor="w", justify="left",
@@ -395,74 +416,87 @@ class AjustesMixin:
 
     # ── TAB: RUTAS ───────────────────────────────────────────────────
     def _ajustes_tab_rutas(self, parent):
-        self._ajustes_seccion(parent, "Archivos en Pendrive / PC — Carpetas de búsqueda")
         ctk.CTkLabel(
             parent,
             text="Usá Examinar para elegir la carpeta. Si es un pendrive, la letra\n"
                  "se recorta sola. Si es un disco fijo, se guarda la ruta absoluta.",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=Palette.TEXT_MUTED,
-        ).pack(anchor="w", padx=14, pady=(0, 4))
+        ).pack(anchor="w", padx=14, pady=(4, 8))
 
+        # Contenedor horizontal: 3 columnas
+        split = ctk.CTkFrame(parent, fg_color="transparent")
+        split.pack(fill="x", padx=10, pady=(0, 4))
+
+        # ── Columna Izquierda: Archivos Pendrive/PC + Escritorio + Backup/Sellos ─────
+        col_izq = ctk.CTkFrame(split, fg_color="transparent")
+        col_izq.pack(side="left", fill="y", padx=(4, 8))
+
+        self._ajustes_seccion(col_izq, "Archivos en Pendrive / PC — Carpetas de búsqueda")
         self._ent_ruta_sobres = self._ajustes_row_browse(
-            parent, "SOBRES (carpeta):",
+            col_izq, "SOBRES (carpeta):",
             self._cfg_obtener_rutas("sobres", "TRABAJO\\01_PLANILLAS"),
             extra="Busca SOBRES_2026.xlsx")
         self._ent_ruta_cobro = self._ajustes_row_browse(
-            parent, "COBRO (carpeta):",
+            col_izq, "COBRO (carpeta):",
             self._cfg_obtener_rutas("cobro", "TRABAJO\\01_PLANILLAS"),
             extra="Busca COBRO_2026.xlsx")
         self._ent_ruta_pc = self._ajustes_row_browse(
-            parent, "PC (carpeta):",
+            col_izq, "PC (carpeta):",
             self._cfg_obtener_rutas("pc", "TRABAJO\\01_PLANILLAS"),
             extra="Busca PC.xlsx / PC_2026.xlsx")
 
-        # Separador
-        ctk.CTkFrame(parent, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
+        ctk.CTkFrame(col_izq, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
 
-        self._ajustes_seccion(parent, "Planilla Maestra — CARGA TERRESTRE")
-        self._ent_ruta_ct_carpeta = self._ajustes_row_browse(
-            parent, "Carpeta:",
-            self._cfg_obtener_rutas("carga_terrestre_carpeta", "TRABAJO\\01_PLANILLAS"))
-        self._ent_ruta_ct_nombre = self._ajustes_row(
-            parent, "Nombre del archivo:",
-            self._cfg_obtener_rutas("carga_terrestre_nombre", "CARGA TERRESTRE.xlsx"), width=280)
-
-        # Separador
-        ctk.CTkFrame(parent, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
-
-        self._ajustes_seccion(parent, "Contenedores de Carga y Descargas")
-        self._ent_ruta_planillas = self._ajustes_row_browse(
-            parent, "Carpeta de Contenedores de Carga:",
-            self._cfg_obtener_rutas("planillas_carga", "Desktop"),
-            extra="Donde se buscan las carpetas con 'PLANILLA DE CARGA'")
-        self._ent_ruta_descarga = self._ajustes_row_browse(
-            parent, "Carpeta de descarga de mails:",
-            self._cfg_obtener_rutas("descarga_mails", "Desktop"),
-            extra="Donde se guardan los adjuntos descargados de los mails")
-
-        # Escritorio
-        ctk.CTkFrame(parent, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
-        self._ajustes_seccion(parent, "Nombre del Escritorio")
+        self._ajustes_seccion(col_izq, "Nombre del Escritorio")
         self._ent_ruta_escritorio = self._ajustes_row(
-            parent, "Nombre de la carpeta Escritorio:",
+            col_izq, "Nombre de la carpeta Escritorio:",
             self._cfg_obtener_rutas("escritorio_nombre", "Desktop"),
             extra="Solo cambiar si tu SO usa otro nombre (ej: 'Desktop' en inglés)", width=200)
 
-        # Backup y Sellos
-        ctk.CTkFrame(parent, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
-        self._ajustes_seccion(parent, "Backup Pendrive y Sellos")
+        ctk.CTkFrame(col_izq, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
+
+        self._ajustes_seccion(col_izq, "Backup Pendrive y Sellos")
         self._ent_ruta_backup = self._ajustes_row_browse(
-            parent, "Backup Pendrive (carpeta):",
+            col_izq, "Backup Pendrive (carpeta):",
             self._cfg_obtener_rutas("backup_pendrive", "TRABAJO\\CARGAS"))
         self._ent_ruta_mic_sellos = self._ajustes_row_browse(
-            parent, "FECHA MIC Y SELLOS (carpeta):",
+            col_izq, "FECHA MIC Y SELLOS (carpeta):",
             self._cfg_obtener_rutas("mic_sellos", "TRABAJO\\01_PLANILLAS"),
             extra="Busca FECHA MIC Y SELLOS.xlsx")
         self._ent_ruta_crt_original = self._ajustes_row_browse(
-            parent, "FECHA CRT Y ORIGINAL (carpeta):",
+            col_izq, "FECHA CRT Y ORIGINAL (carpeta):",
             self._cfg_obtener_rutas("crt_original", "TRABAJO\\01_PLANILLAS"),
             extra="Busca FECHA CRT Y ORIGINAL.xlsx")
+
+        # ── Columna Centro: Planilla Maestra + Contenedores ───────────────────────
+        col_der = ctk.CTkFrame(split, fg_color="transparent")
+        col_der.pack(side="left", fill="y", padx=(8, 4))
+
+        self._ajustes_seccion(col_der, "Planilla Maestra — CARGA TERRESTRE")
+        self._ent_ruta_ct_carpeta = self._ajustes_row_browse(
+            col_der, "Carpeta:",
+            self._cfg_obtener_rutas("carga_terrestre_carpeta", "TRABAJO\\01_PLANILLAS"))
+        self._ent_ruta_ct_nombre = self._ajustes_row(
+            col_der, "Nombre del archivo:",
+            self._cfg_obtener_rutas("carga_terrestre_nombre", "CARGA TERRESTRE.xlsx"), width=280)
+
+        ctk.CTkFrame(col_der, fg_color=Palette.DIVIDER, height=1).pack(fill="x", padx=14, pady=(10, 8))
+
+        self._ajustes_seccion(col_der, "Contenedores de Carga y Descargas")
+        self._ent_ruta_planillas = self._ajustes_row_browse(
+            col_der, "Carpeta de Contenedores de Carga:",
+            self._cfg_obtener_rutas("planillas_carga", "Desktop"),
+            extra="Donde se buscan las carpetas con 'PLANILLA DE CARGA'")
+        self._ent_ruta_descarga = self._ajustes_row_browse(
+            col_der, "Carpeta de descarga de mails:",
+            self._cfg_obtener_rutas("descarga_mails", "Desktop"),
+            extra="Donde se guardan los adjuntos descargados de los mails")
+
+        # ── Columna Derecha: (vacía para futuras opciones) ────────────────────────
+        col_pdf = ctk.CTkFrame(split, fg_color="transparent")
+        col_pdf.pack(side="left", fill="y", padx=(8, 4))
+        # Reservada para futuras configuraciones
 
     # ── TAB: VALORES ──────────────────────────────────────────────────
     def _ajustes_tab_descarga(self, parent):
@@ -932,11 +966,16 @@ class AjustesMixin:
             docs_cfg = {}
             for key_doc, attr in [("dorso_mic", "_ent_dorso_mic"), ("dorso_crt", "_ent_dorso_crt"),
                                   ("dorso_pe", "_ent_dorso_pe"), ("permiso_exportacion", "_ent_permiso_exp"),
-                                  ("hoja_ruta", "_ent_hoja_ruta"), ("sobre", "_ent_sobre")]:
+                                  ("hoja_ruta", "_ent_hoja_ruta"), ("sobre", "_ent_sobre"),
+                                  ("escala_pdf", "_ent_escala_pdf")]:
                 w = _g(attr)
                 if w is not None:
                     try:
-                        docs_cfg[key_doc] = int(w.get().strip())
+                        val = int(w.get().strip())
+                        # Clamp 85-100 para escala_pdf
+                        if key_doc == "escala_pdf":
+                            val = max(85, min(100, val))
+                        docs_cfg[key_doc] = val
                     except ValueError:
                         pass
             w_chk = _g("_chk_intercalar")
