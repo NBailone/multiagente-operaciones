@@ -813,6 +813,45 @@ class PlanillasMixin:
             _ = used.Value
             used.Value = _
 
+            # AutoFit solo ensancha (no achica) para evitar columna B cortada sin dejar todo amontonado
+            # Guarda anchos originales, hace AutoFit por columna y restaura si achicó
+            try:
+                anchos_orig = {}
+                for col in ("A", "B", "C", "D", "E", "F"):
+                    try:
+                        anchos_orig[col] = ws.Columns(col).ColumnWidth
+                    except Exception:
+                        anchos_orig[col] = None
+                for col in ("A", "B", "C", "D", "E", "F"):
+                    try:
+                        ws.Columns(col).AutoFit()
+                        if anchos_orig[col] is not None and ws.Columns(col).ColumnWidth < anchos_orig[col]:
+                            ws.Columns(col).ColumnWidth = anchos_orig[col]
+                    except Exception:
+                        pass
+                # Columna B: ancho justo por texto + margen +4 para aire (tu idea)
+                try:
+                    max_len_b = 0
+                    # UsedRange puede ser grande, iterar solo filas con datos
+                    for r in range(1, ws.UsedRange.Rows.Count + 1):
+                        try:
+                            v = ws.Cells(r, 2).Value
+                        except Exception:
+                            v = None
+                        if v is not None:
+                            l = len(str(v))
+                            if l > max_len_b:
+                                max_len_b = l
+                    if max_len_b > 0:
+                        fit_b = max_len_b * 1.35 + 4  # +4 margen holgado como pediste
+                        cur_b = ws.Columns("B").ColumnWidth
+                        if fit_b > cur_b:
+                            ws.Columns("B").ColumnWidth = fit_b
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
             if protegida:
                 ws.Protect(Password=clave)
 
