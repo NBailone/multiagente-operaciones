@@ -579,14 +579,18 @@ class ImpresionMixin:
                     if not os.path.exists(ruta):
                         self._log(f"⚠ Dorso {tipo}: archivo no encontrado ({ruta})")
                         continue
-                    if n > 1 and sumatra:
-                        # Un solo trabajo con N copias en orden explícito
+                    if sumatra:
+                        # Un solo trabajo con N copias + shrink (respeta formato, evita corte)
                         secuencia = self._imp_secuencia_paginas(
                             ruta, n,
                             intercalar=self._cfg_obtener_docs("intercalar", False),
                         ) or f"{n}x,nocollate"
+                        if "shrink" not in secuencia and "fit" not in secuencia and "noscale" not in secuencia:
+                            settings = f"{secuencia},shrink"
+                        else:
+                            settings = secuencia
                         subprocess.run(
-                            [sumatra, "-print-to-default", "-print-settings", secuencia,
+                            [sumatra, "-print-to-default", "-print-settings", settings,
                              "-exit-when-done", ruta],
                             creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                         )
@@ -1152,24 +1156,30 @@ class ImpresionMixin:
             ext = os.path.splitext(ruta_archivo)[1].upper()
             es_excel = ext in (".XLSX", ".XLS")
 
-            # PDFs: un solo trabajo con N copias vía SumatraPDF (rápido).
+            # PDFs: un solo trabajo vía SumatraPDF con escala "shrink"
+            # (respeta formato, solo achica si excede área imprimible — no corta).
             # Orden explícito de páginas (ej: "1,1,2,2"): garantiza copias no
             # intercaladas aunque el driver ignore el flag de collate.
-            if ext == ".PDF" and copias > 1:
+            if ext == ".PDF":
                 sumatra = self._imp_sumatra_exe()
                 if sumatra:
                     secuencia = self._imp_secuencia_paginas(
                         ruta_archivo, copias,
                         intercalar=self._cfg_obtener_docs("intercalar", False))
-                    settings = secuencia or f"{copias}x,nocollate"
-                    self._log(f"     → Impresora predeterminada ({copias} copias en un solo trabajo)")
+                    base = secuencia or f"{copias}x,nocollate"
+                    # shrink = solo reduce si es grande, respeta formato
+                    if "shrink" not in base and "fit" not in base and "noscale" not in base:
+                        settings = f"{base},shrink"
+                    else:
+                        settings = base
+                    self._log(f"     → Impresora predeterminada ({copias} copias, shrink)")
                     subprocess.run(
                         [sumatra, "-print-to-default", "-print-settings", settings,
                          "-exit-when-done", ruta_archivo],
                         creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                     )
                     return True
-                self._log(f"     → SumatraPDF no disponible: enviando copias una por una")
+                self._log(f"     → SumatraPDF no disponible: enviando sin control de escala (puede cortarse)")
 
             self._log(f"     → Impresora predeterminada")
             if es_excel and self._excel_com_ok:
