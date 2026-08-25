@@ -580,12 +580,23 @@ class ImpresionMixin:
                         self._log(f"⚠ Dorso {tipo}: archivo no encontrado ({ruta})")
                         continue
                     if sumatra:
-                        # Un solo trabajo con N copias: escala configurable (default 92%)
+                        # Un solo trabajo con N copias: escala individual por dorso
                         secuencia = self._imp_secuencia_paginas(
                             ruta, n,
                             intercalar=self._cfg_obtener_docs("intercalar", False),
                         ) or f"{n}x,nocollate"
-                        escala_pct = self._cfg_obtener_docs("escala_pdf", 92)
+                        # Escala individual por tipo de dorso
+                        tipo_lower = tipo.lower()
+                        if "mic" in tipo_lower:
+                            escala_pct = self._cfg_obtener_docs("escala_dorso_mic", 90)
+                        elif "crt" in tipo_lower:
+                            escala_pct = self._cfg_obtener_docs("escala_dorso_crt", 90)
+                        elif "pe" in tipo_lower:
+                            escala_pct = self._cfg_obtener_docs("escala_dorso_pe", 90)
+                        else:
+                            escala_pct = self._cfg_obtener_docs("escala_pdf", 90)
+                        self._log(f"[DORSO ESCALA] tipo='{tipo}' → {escala_pct}%")
+                        
                         if escala_pct < 100:
                             # Generar PDF temporal escalado + noscale,center
                             escala = escala_pct / 100.0
@@ -600,8 +611,8 @@ class ImpresionMixin:
                                         settings = f"{settings},noscale"
                                     if "center" not in settings:
                                         settings = f"{settings},center"
-                                    if "color" not in settings:
-                                        settings = f"{settings},color"
+                                    if "monochrome" not in settings:
+                                        settings = f"{settings},monochrome"
                                 self._log(f"     → Dorso {tipo}: {n} copias, escala {escala_pct}%, noscale,center")
                                 try:
                                     subprocess.run(
@@ -945,6 +956,26 @@ class ImpresionMixin:
         prefijo_permiso = f"{anio}069EC"
         total_ok = 0
 
+        # Abrir Excel UNA VEZ si hay Excels en la cola y método PDF está activo
+        hay_excels = any(opciones.get(k) for k in ("sobre", "hoja_ruta", "servicio_ata"))
+        metodo_sobre_pdf = self._cfg_obtener_docs("metodo_sobre", "pdf") == "pdf"
+        metodo_hr_pdf = self._cfg_obtener_docs("metodo_hoja_ruta", "pdf") == "pdf"
+        excel_app = None
+        if hay_excels and self._excel_com_ok and (metodo_sobre_pdf or metodo_hr_pdf):
+            import pythoncom
+            import win32com.client
+            pythoncom.CoInitialize()
+            try:
+                excel_app = win32com.client.DispatchEx("Excel.Application")
+                excel_app.Visible = False
+                excel_app.DisplayAlerts = False
+                self._excel_app_worker = excel_app
+            except Exception as e:
+                self._log(f"     → No se pudo iniciar Excel: {e}")
+                try: pythoncom.CoUninitialize()
+                except: pass
+                excel_app = None
+
         try:
             for ruta in seleccionadas:
                 nombre = os.path.basename(ruta)
@@ -1034,6 +1065,17 @@ class ImpresionMixin:
             self._log(f"ERROR en impresión: {e}")
             traceback.print_exc()
         finally:
+            # Cerrar Excel si se abrió
+            if excel_app:
+                try:
+                    excel_app.Quit()
+                except Exception:
+                    pass
+                try:
+                    pythoncom.CoUninitialize()
+                except Exception:
+                    pass
+                self._excel_app_worker = None
             self.after(0, self._imp_done)
 
     def _imp_hojas_sobre(self, ruta_excel):
@@ -1173,10 +1215,10 @@ class ImpresionMixin:
         except Exception:
             return None
 
-    def _imp_preparar_pdf(self, ruta_pdf, escala=0.92):
+    def _imp_preparar_pdf(self, ruta_pdf, escala=0.90):
         """Crea PDF temporal escalado al % indicado centrado (sin hairlines).
         
-        escala: 0.85-1.0 (ej: 0.92 = 92%). Retorna ruta temporal o None si falla.
+        escala: 0.85-1.0 (ej: 0.90 = 90%). Retorna ruta temporal o None si falla.
         """
         try:
             try:
@@ -1214,6 +1256,126 @@ class ImpresionMixin:
         except Exception:
             return None
 
+    def _obtener_escala_por_descripcion(self, descripcion):
+        """Retorna la escala (%) según el tipo de documento en la descripción."""
+        desc = descripcion.lower()
+        if "sobre" in desc:
+            escala = self._cfg_obtener_docs("escala_sobre", 90)
+        elif "permiso" in desc:
+            escala = self._cfg_obtener_docs("escala_permiso", 90)
+        elif "hoja ruta" in desc:
+            escala = self._cfg_obtener_docs("escala_hoja_ruta", 90)
+        elif "dorso mic" in desc:
+            escala = self._cfg_obtener_docs("escala_dorso_mic", 90)
+        elif "dorso crt" in desc:
+            escala = self._cfg_obtener_docs("escala_dorso_crt", 90)
+        elif "dorso pe" in desc:
+            escala = self._cfg_obtener_docs("escala_dorso_pe", 90)
+        else:
+            escala = self._cfg_obtener_docs("escala_pdf", 90)
+        self._log(f"[ESCALA] desc='{descripcion}' → {escala}%")
+        return escala
+
+    def _imp_enviar_pdf(self, ruta_pdf, impresora, descripcion, copias=1):
+        """Envía un PDF a la impresora via SumatraPDF con configuración de escala/monochrome."""
+        sumatra = self._imp_sumatra_exe()
+        if not sumatra:
+            self._log(f"     → SumatraPDF no disponible: enviando sin control de escala (puede cortarse)")
+            return False
+        
+        secuencia = self._imp_secuencia_paginas(
+            ruta_pdf, copias,
+            intercalar=self._cfg_obtener_docs("intercalar", False))
+        base = secuencia or f"{copias}x,nocollate"
+        escala_pct = self._obtener_escala_por_descripcion(descripcion)
+        
+        if escala_pct < 100:
+            # Generar PDF temporal escalado + noscale,center
+            escala = escala_pct / 100.0
+            tmp_pdf = self._imp_preparar_pdf(ruta_pdf, escala)
+            if tmp_pdf:
+                ruta_print = tmp_pdf
+                if "noscale" not in base and "fit" not in base and "shrink" not in base:
+                    settings = f"{base},noscale,center,monochrome"
+                else:
+                    settings = base.replace("fit", "noscale").replace("shrink", "noscale")
+                    if "noscale" not in settings:
+                        settings = f"{settings},noscale"
+                    if "center" not in settings:
+                        settings = f"{settings},center"
+                    if "monochrome" not in settings:
+                        settings = f"{settings},monochrome"
+                self._log(f"     → Impresora predeterminada ({copias} copias, escala {escala_pct}%, noscale,center)")
+                try:
+                    subprocess.run(
+                        [sumatra, "-print-to-default", "-print-settings", settings,
+                         "-exit-when-done", ruta_print],
+                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+                    )
+                finally:
+                    try: os.unlink(tmp_pdf)
+                    except Exception: pass
+                return True
+            # Si falla temporal, caer a fit,center
+            self._log(f"     → Falló temporal, usando fit,center")
+        
+        # escala 100% o fallback: fit,center directo
+        if "fit" not in base and "shrink" not in base and "noscale" not in base:
+            settings = f"{base},fit,center,monochrome"
+        else:
+            settings = base.replace("shrink", "fit").replace("noscale", "fit")
+            if "fit" not in settings:
+                settings = f"{settings},fit"
+            if "center" not in settings:
+                settings = f"{settings},center"
+            if "monochrome" not in settings:
+                settings = f"{settings},monochrome"
+        self._log(f"     → Impresora predeterminada ({copias} copias, fit,center)")
+        try:
+            subprocess.run(
+                [sumatra, "-print-to-default", "-print-settings", settings,
+                 "-exit-when-done", ruta_pdf],
+                creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
+            )
+        except Exception as e:
+            self._log(f"     → ERROR SumatraPDF: {e}")
+            return False
+        return True
+
+    def _imp_excel_a_pdf(self, excel_app, ruta_excel, hojas=None):
+        """Exporta hojas de Excel a PDF temp, aplica escala 92% del programa, retorna ruta."""
+        import tempfile, os
+        try:
+            wb = excel_app.Workbooks.Open(
+                ruta_excel,
+                ReadOnly=True, UpdateLinks=0,
+                IgnoreReadOnlyRecommended=True
+            )
+            excel_app.ScreenUpdating = False
+            excel_app.EnableEvents = False
+            excel_app.DisplayAlerts = False
+            
+            fd, tmp_raw = tempfile.mkstemp(suffix=".__excel_raw__.pdf")
+            os.close(fd)
+            
+            if hojas:
+                for h in hojas:
+                    ws = wb.Worksheets(h)
+                    ws.ExportAsFixedFormat(0, tmp_raw)  # xlTypePDF
+            else:
+                wb.ExportAsFixedFormat(0, tmp_raw)
+            
+            wb.Close(SaveChanges=False)
+            
+            # Aplicar escala 90% + monochrome (reusa _imp_preparar_pdf)
+            tmp_scaled = self._imp_preparar_pdf(tmp_raw, escala=0.90)
+            try: os.unlink(tmp_raw)
+            except: pass
+            
+            return tmp_scaled if tmp_scaled else tmp_raw
+        except Exception:
+            return None
+
     def _imp_enviar(self, ruta_archivo, impresora, descripcion, hojas=None, copias=1):
         """Envía un archivo a la impresora seleccionada. hojas=lista, copias=N."""
         nombre_archivo = os.path.basename(ruta_archivo)
@@ -1237,8 +1399,13 @@ class ImpresionMixin:
                         ruta_archivo, copias,
                         intercalar=self._cfg_obtener_docs("intercalar", False))
                     base = secuencia or f"{copias}x,nocollate"
-                    # Leer escala de config (85-100, default 92)
-                    escala_pct = self._cfg_obtener_docs("escala_pdf", 92)
+                    # Leer escala de config (85-100, default 90)
+                    escala_pct = self._cfg_obtener_docs("escala_pdf", 90)
+
+                    # Permiso (PDF directo): usar escala individual si está configurada
+                    if "permiso" in descripcion.lower():
+                        escala_permiso = self._cfg_obtener_docs("escala_permiso", 90)
+                        escala_pct = escala_permiso
                     if escala_pct < 100:
                         # Generar PDF temporal escalado + noscale,center
                         escala = escala_pct / 100.0
@@ -1293,6 +1460,28 @@ class ImpresionMixin:
 
             self._log(f"     → Impresora predeterminada")
             if es_excel and self._excel_com_ok:
+                # Verificar config para método de impresión (pdf/excel)
+                metodo = "excel"  # default legacy
+                # Detectar si es Sobre o Hoja de Ruta por la descripción
+                desc_lower = descripcion.lower()
+                if "sobre" in desc_lower:
+                    metodo = self._cfg_obtener_docs("metodo_sobre", "pdf")
+                elif "hoja ruta" in desc_lower or "hoja_ruta" in desc_lower:
+                    metodo = self._cfg_obtener_docs("metodo_hoja_ruta", "pdf")
+                
+                if metodo == "pdf" and getattr(self, '_excel_app_worker', None):
+                    # Ruta nueva: Excel → PDF temp → Sumatra (silencioso)
+                    tmp_pdf = self._imp_excel_a_pdf(self._excel_app_worker, ruta_archivo, hojas)
+                    if tmp_pdf:
+                        try:
+                            return self._imp_enviar_pdf(tmp_pdf, impresora, descripcion, copias)
+                        finally:
+                            try: os.unlink(tmp_pdf)
+                            except: pass
+                    # Si falla, caer a COM legacy
+                    self._log(f"     → Falló conversión PDF, usando Excel COM")
+                
+                # Ruta legacy: COM directo con PrintOut + Quit
                 result = self._imp_excel_com(ruta_archivo, impresora, hojas, copias)
             else:
                 if es_excel and not self._excel_com_ok:

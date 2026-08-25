@@ -244,6 +244,64 @@ class AjustesMixin:
             ).pack(anchor="w", pady=(1, 0))
         return e
 
+    def _ajustes_row_optionmenu(self, parent, label, values, default=""):
+        """Crea fila con OptionMenu para seleccionar método."""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=3)
+        ctk.CTkLabel(
+            row, text=label,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            text_color=Palette.TEXT_SECONDARY, anchor="w",
+        ).pack(anchor="w")
+        # Mapear display value a valor guardado
+        value_map = {"PDF (rápido)": "pdf", "Excel (COM)": "excel"}
+        reverse_map = {v: k for k, v in value_map.items()}
+        display_default = reverse_map.get(default, default)
+        var = ctk.StringVar(value=display_default)
+        opt = ctk.CTkOptionMenu(
+            row, variable=var, values=values,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_INPUT, button_color=Palette.ACCENT,
+            button_hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.TEXT_PRIMARY,
+            dropdown_fg_color=Palette.BG_CARD,
+            dropdown_hover_color=Palette.BG_HOVER,
+            dropdown_text_color=Palette.TEXT_PRIMARY,
+            corner_radius=4, width=160, height=30,
+        )
+        opt.pack(anchor="w", pady=(2, 0))
+        # Guardar reference para obtener valor real al guardar
+        opt._value_map = value_map
+        opt._var = var
+        return opt
+
+    def _ajustes_row_grid(self, parent, label, config_key, default, row, col, extra=None):
+        """Crea Entry en grid para tab Escalas: label arriba, entry abajo con '85-100' al lado."""
+        cell = ctk.CTkFrame(parent, fg_color="transparent")
+        cell.grid(row=row, column=col, padx=4, pady=2, sticky="ew")
+        ctk.CTkLabel(
+            cell, text=label,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=11, weight="bold"),
+            text_color=Palette.TEXT_SECONDARY, anchor="w",
+        ).pack(anchor="w")
+        entry_row = ctk.CTkFrame(cell, fg_color="transparent")
+        entry_row.pack(fill="x", pady=(2, 0))
+        e = ctk.CTkEntry(
+            entry_row, width=65, height=28,
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_INPUT, border_color=Palette.BORDER,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=4,
+        )
+        e.insert(0, str(self._cfg_obtener_docs(config_key, default)))
+        e.pack(side="left")
+        if extra:
+            ctk.CTkLabel(
+                entry_row, text=extra,
+                font=ctk.CTkFont(family=FONT_FAMILY, size=9),
+                text_color=Palette.TEXT_MUTED, anchor="w",
+            ).pack(side="left", padx=(2, 0))
+        return e
+
     # ── TAB: CORREO ──────────────────────────────────────────────────
     def _ajustes_tab_correo(self, parent):
         # Contenedor horizontal: 2 columnas - Credenciales a la izquierda, Destinatarios a la derecha
@@ -299,46 +357,53 @@ class AjustesMixin:
 
     # ── TAB: DOCUMENTOS ──────────────────────────────────────────────
     def _ajustes_tab_documentos(self, parent):
-        # Contenedor horizontal: izquierda (dorsos) | centro (copias) | derecha (ajuste pdf)
-        split = ctk.CTkFrame(parent, fg_color="transparent")
-        split.pack(fill="x", padx=10, pady=(4, 0))
+        # Tabview con 2 pestañas: Copias y Método | Escalas
+        tabview = ctk.CTkTabview(
+            parent,
+            fg_color=Palette.BG_CARD,
+            segmented_button_fg_color=Palette.BG_INPUT,
+            segmented_button_selected_color=Palette.ACCENT,
+            segmented_button_selected_hover_color=Palette.ACCENT_HOVER,
+            text_color=Palette.TEXT_PRIMARY,
+        )
+        tabview.pack(fill="both", expand=True, padx=10, pady=(4, 0))
 
-        # ── Columna Izquierda: Dorsos ────────────────────────────────
-        col_izq = ctk.CTkFrame(split, fg_color="transparent")
-        col_izq.pack(side="left", fill="y", padx=(4, 8))
+        # ── TAB 1: COPIAS Y MÉTODO ───────────────────────────────────
+        tab_copias = tabview.add("Copias y Método")
 
-        self._ajustes_seccion(col_izq, "Hojas — Dorsos")
-        self._ent_dorso_mic = self._ajustes_row(
-            col_izq, "Dorso MIC:", str(self._cfg_obtener_docs("dorso_mic", 15)), width=70)
-        self._ent_dorso_crt = self._ajustes_row(
-            col_izq, "Dorso CRT:", str(self._cfg_obtener_docs("dorso_crt", 4)), width=70)
-        self._ent_dorso_pe = self._ajustes_row(
-            col_izq, "Dorso PE:", str(self._cfg_obtener_docs("dorso_pe", 2)), width=70)
+        # Copias de Impresión - 1 fila x 6 columnas (grid)
+        self._ajustes_seccion(tab_copias, "Copias de Impresión")
+        grid_copias = ctk.CTkFrame(tab_copias, fg_color="transparent")
+        grid_copias.pack(fill="x", padx=14, pady=4)
+        for i in range(6):
+            grid_copias.columnconfigure(i, weight=1)
 
-        # ── Columna Centro: Copias ──────────────────────────────────
-        col_der = ctk.CTkFrame(split, fg_color="transparent")
-        col_der.pack(side="left", fill="y", padx=(8, 4))
+        self._ent_permiso_exp = self._ajustes_row_grid(
+            grid_copias, "Permiso", "permiso_exportacion", 2, row=0, col=0)
+        self._ent_hoja_ruta = self._ajustes_row_grid(
+            grid_copias, "Hoja Ruta", "hoja_ruta", 2, row=0, col=1)
+        self._ent_sobre = self._ajustes_row_grid(
+            grid_copias, "Sobre", "sobre", 1, row=0, col=2)
+        self._ent_dorso_mic = self._ajustes_row_grid(
+            grid_copias, "D. MIC", "dorso_mic", 15, row=0, col=3)
+        self._ent_dorso_crt = self._ajustes_row_grid(
+            grid_copias, "D. CRT", "dorso_crt", 4, row=0, col=4)
+        self._ent_dorso_pe = self._ajustes_row_grid(
+            grid_copias, "D. PE", "dorso_pe", 2, row=0, col=5)
 
-        self._ajustes_seccion(col_der, "Copias — Impresión")
-        self._ent_permiso_exp = self._ajustes_row(
-            col_der, "Permiso de Exportación:", str(self._cfg_obtener_docs("permiso_exportacion", 2)), width=70)
-        self._ent_hoja_ruta = self._ajustes_row(
-            col_der, "Hoja de Ruta:", str(self._cfg_obtener_docs("hoja_ruta", 2)), width=70)
-        self._ent_sobre = self._ajustes_row(
-            col_der, "Sobre (Planilla de Carga):", str(self._cfg_obtener_docs("sobre", 1)), width=70)
+        # Método de Impresión
+        self._ajustes_seccion(tab_copias, "Método de Impresión")
+        self._ent_metodo_sobre = self._ajustes_row_optionmenu(
+            tab_copias, "Método Sobre:", ["PDF (rápido)", "Excel (COM)"],
+            self._cfg_obtener_docs("metodo_sobre", "pdf"))
+        self._ent_metodo_hoja_ruta = self._ajustes_row_optionmenu(
+            tab_copias, "Método Hoja Ruta:", ["PDF (rápido)", "Excel (COM)"],
+            self._cfg_obtener_docs("metodo_hoja_ruta", "pdf"))
 
-        # ── Columna Derecha: Ajuste PDF ──────────────────────────────
-        col_pdf = ctk.CTkFrame(split, fg_color="transparent")
-        col_pdf.pack(side="left", fill="y", padx=(8, 4))
-
-        self._ajustes_seccion(col_pdf, "Ajuste PDF")
-        self._ent_escala_pdf = self._ajustes_row(
-            col_pdf, "Escala (%):", str(self._cfg_obtener_docs("escala_pdf", 92)), width=70,
-            extra="85-100. 92 = Adobe Ajustar con aire. 100 = sin achicar")
-
-        # Intercalado de copias múltiples (permisos/dorsos PDF)
+        # Opciones
+        self._ajustes_seccion(tab_copias, "Opciones")
         self._chk_intercalar = ctk.CTkCheckBox(
-            col_pdf, text="Intercalar copias",
+            tab_copias, text="Intercalar copias",
             font=ctk.CTkFont(family=FONT_FAMILY, size=12),
             fg_color=Palette.ACCENT, hover_color=Palette.ACCENT_HOVER,
             border_color=Palette.BORDER, checkmark_color=Palette.WHITE,
@@ -348,11 +413,49 @@ class AjustesMixin:
             self._chk_intercalar.select()
         self._chk_intercalar.pack(anchor="w", padx=14, pady=(8, 0))
         ctk.CTkLabel(
-            col_pdf,
+            tab_copias,
             text="Marcado: 1,2,1,2 (juego completo por copia)\nDesmarcado: 1,1,2,2 (cada hoja junta)",
             font=ctk.CTkFont(family=FONT_FAMILY, size=10),
             text_color=Palette.TEXT_MUTED, anchor="w", justify="left",
         ).pack(anchor="w", padx=14, pady=(2, 0))
+
+        # ── TAB 2: ESCALAS ───────────────────────────────────────────
+        tab_escalas = tabview.add("Escalas")
+
+        # Título ANTES del grid
+        self._ajustes_seccion(tab_escalas, "Escalas Individuales (%)")
+
+        # Grid 2 filas: Documentos (4 cols) + Dorsos (3 cols)
+        grid_frame = ctk.CTkFrame(tab_escalas, fg_color="transparent")
+        grid_frame.pack(fill="x", padx=14, pady=4)
+        grid_frame.columnconfigure((0, 1, 2, 3), weight=1)
+
+        # Fila 0: Documentos - 4 columnas: Sobre, Permiso, Hoja Ruta, Global
+        self._ent_escala_sobre = self._ajustes_row_grid(
+            grid_frame, "Sobre", "escala_sobre", 90, row=0, col=0)
+        self._ent_escala_permiso = self._ajustes_row_grid(
+            grid_frame, "Permiso", "escala_permiso", 90, row=0, col=1)
+        self._ent_escala_hoja_ruta = self._ajustes_row_grid(
+            grid_frame, "Hoja Ruta", "escala_hoja_ruta", 90, row=0, col=2)
+        self._ent_escala_pdf = self._ajustes_row_grid(
+            grid_frame, "Global", "escala_pdf", 90, row=0, col=3,
+            extra="85-100. 92 = Adobe Ajustar. 100 = sin achicar")
+
+        # Fila 1: Dorsos - 3 columnas: D. MIC, D. CRT, D. PE
+        self._ent_escala_dorso_mic = self._ajustes_row_grid(
+            grid_frame, "D. MIC", "escala_dorso_mic", 90, row=1, col=0)
+        self._ent_escala_dorso_crt = self._ajustes_row_grid(
+            grid_frame, "D. CRT", "escala_dorso_crt", 90, row=1, col=1)
+        self._ent_escala_dorso_pe = self._ajustes_row_grid(
+            grid_frame, "D. PE", "escala_dorso_pe", 90, row=1, col=2)
+
+        # Nota
+        ctk.CTkLabel(
+            tab_escalas,
+            text="✏️  Typear valor a mano  |  Validación 85-100 al guardar",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=10),
+            text_color=Palette.TEXT_MUTED,
+        ).pack(anchor="w", padx=14, pady=(4, 0))
 
     def _ajustes_row_browse(self, parent, label, default="", extra=None, width=290):
         """Como _ajustes_row pero con botón 📂 Examinar.
@@ -967,17 +1070,31 @@ class AjustesMixin:
             for key_doc, attr in [("dorso_mic", "_ent_dorso_mic"), ("dorso_crt", "_ent_dorso_crt"),
                                   ("dorso_pe", "_ent_dorso_pe"), ("permiso_exportacion", "_ent_permiso_exp"),
                                   ("hoja_ruta", "_ent_hoja_ruta"), ("sobre", "_ent_sobre"),
-                                  ("escala_pdf", "_ent_escala_pdf")]:
+                                  ("escala_pdf", "_ent_escala_pdf"),
+                                  ("escala_sobre", "_ent_escala_sobre"),
+                                  ("escala_permiso", "_ent_escala_permiso"),
+                                  ("escala_hoja_ruta", "_ent_escala_hoja_ruta"),
+                                  ("escala_dorso_mic", "_ent_escala_dorso_mic"),
+                                  ("escala_dorso_crt", "_ent_escala_dorso_crt"),
+                                  ("escala_dorso_pe", "_ent_escala_dorso_pe")]:
                 w = _g(attr)
                 if w is not None:
                     try:
                         val = int(w.get().strip())
-                        # Clamp 85-100 para escala_pdf
-                        if key_doc == "escala_pdf":
+                        # Clamp 85-100 para todas las escalas
+                        if key_doc.startswith("escala_"):
                             val = max(85, min(100, val))
                         docs_cfg[key_doc] = val
                     except ValueError:
                         pass
+            # Métodos de impresión (pdf/excel)
+            for key_doc, attr in [("metodo_sobre", "_ent_metodo_sobre"), ("metodo_hoja_ruta", "_ent_metodo_hoja_ruta")]:
+                w = _g(attr)
+                if w is not None:
+                    # OptionMenu guarda "PDF (rápido)" / "Excel (COM)" → mapear a "pdf"/"excel"
+                    value_map = {"PDF (rápido)": "pdf", "Excel (COM)": "excel"}
+                    display_val = w._var.get()
+                    docs_cfg[key_doc] = value_map.get(display_val, "pdf")
             w_chk = _g("_chk_intercalar")
             if w_chk is not None:
                 docs_cfg["intercalar"] = bool(w_chk.get())
