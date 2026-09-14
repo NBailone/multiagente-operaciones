@@ -475,7 +475,7 @@ class DescargaMixin:
                     raise e
 
     def _mail_buscar_headers(self, mail, todos_ids, solo_papeles=True):
-        """Helper: busca headers y devuelve [(fecha_dt, fecha_str, mid, asunto), ...].
+        """Helper: busca headers y devuelve [(fecha_dt, fecha_display, mid, asunto), ...].
         Usa un solo FETCH múltiple para evitar N viajes IMAP individuales."""
         from email.utils import parsedate_to_datetime
         resultados = []
@@ -510,27 +510,86 @@ class DescargaMixin:
             self._procesar_header(header, mid, solo_papeles, resultados, parsedate_to_datetime)
         return resultados
 
+    @staticmethod
+    def _decodificar_mime(valor):
+        """Decodifica un header MIME (RFC 2047): =?charset?Q?...?= / =?charset?B?...?=."""
+        if valor is None:
+            return ""
+        from email.header import decode_header
+        # Header objects (policy.default) -> str() ya decodifica
+        try:
+            texto = str(valor)
+        except Exception:
+            texto = valor if isinstance(valor, str) else ""
+        try:
+            fragmentos = decode_header(texto)
+        except Exception:
+            return texto.strip()
+        partes = []
+        for contenido, charset in fragmentos:
+            if isinstance(contenido, bytes):
+                decodificado = None
+                for cs in ([charset] if charset else []) + ["utf-8", "iso-8859-1", "latin-1"]:
+                    try:
+                        decodificado = contenido.decode(cs)
+                        break
+                    except Exception:
+                        continue
+                partes.append(decodificado if decodificado is not None else contenido.decode("utf-8", errors="replace"))
+            else:
+                partes.append(contenido)
+        return " ".join("".join(partes).split())
+
+    @staticmethod
+    def _formatear_fecha_local(fecha_dt):
+        """Convierte a hora local y formatea en español corto: 'dom 13/09 04:56'."""
+        from datetime import timezone
+        try:
+            if fecha_dt is None or fecha_dt == datetime.min:
+                return "—"
+            if fecha_dt.tzinfo is None:
+                # Sin zona horaria: se asume UTC y se convierte a local
+                fecha_dt = fecha_dt.replace(tzinfo=timezone.utc)
+            local = fecha_dt.astimezone()
+            dias = {"Mon": "lun", "Tue": "mar", "Wed": "mié", "Thu": "jue",
+                    "Fri": "vie", "Sat": "sáb", "Sun": "dom"}
+            dia = dias.get(local.strftime("%a"), local.strftime("%a").lower())
+            return f"{dia} {local.strftime('%d/%m %H:%M')}"
+        except Exception:
+            return "—"
+
     def _procesar_header(self, header, mid, solo_papeles, resultados, parsedate_to_datetime):
-        """Extrae datos de un header IMAP y los agrega a resultados si cumple filtros."""
-        match_subj = re.search(r"Subject:\s*(.+)", header, re.IGNORECASE)
-        match_from = re.search(r"From:\s*(.+)", header, re.IGNORECASE)
-        if not match_subj:
+        """Extrae datos de un header IMAP y los agrega a resultados si cumple filtros.
+
+        Guarda (fecha_dt, fecha_display, mid, asunto) donde fecha_display ya viene
+        en hora local y español corto, y asunto ya decodificado (RFC 2047).
+        """
+        try:
+            raw = header.encode("utf-8", errors="replace") if isinstance(header, str) else (header or b"")
+            msg = email.message_from_bytes(raw)
+            asunto = self._decodificar_mime(msg.get("Subject", ""))
+            remitente = self._decodificar_mime(msg.get("From", ""))
+            fecha_raw = (msg.get("Date", "") or "").strip()
+            # Fallback por si el parse MIME no encontró Subject (header atípico)
+            if not asunto and isinstance(header, str):
+                match_subj = re.search(r"Subject:\s*(.+)", header, re.IGNORECASE)
+                if match_subj:
+                    asunto = self._decodificar_mime(match_subj.group(1).strip())
+            if not asunto:
+                return
+        except Exception:
             return
-        asunto = match_subj.group(1).strip()
-        remitente = match_from.group(1).strip() if match_from else ""
         if solo_papeles:
             if not asunto.lower().startswith("papeles"):
                 return
             remitente_papeles = self._cfg_obtener_correo("remitente_papeles", "")
             if remitente_papeles and remitente_papeles.lower() not in remitente.lower():
                 return
-        match_date = re.search(r"Date:\s*(.+)", header, re.IGNORECASE)
-        fecha_str = match_date.group(1).strip() if match_date else ""
         try:
-            fecha_dt = parsedate_to_datetime(fecha_str)
+            fecha_dt = parsedate_to_datetime(fecha_raw) if fecha_raw else datetime.min
         except Exception:
             fecha_dt = datetime.min
-        resultados.append((fecha_dt, fecha_str, mid, asunto))
+        resultados.append((fecha_dt, self._formatear_fecha_local(fecha_dt), mid, asunto))
 
     def _mail_worker(self, cantidad):
         """Modo 0: Descarga automática de los N mails más nuevos que cumplen las reglas."""
@@ -609,7 +668,7 @@ class DescargaMixin:
                     for nombre_carpeta, ruta_final in carpetas_creadas:
                         resultados.append((asunto, adj_nombres, nombre_carpeta))
                         self.after(0, lambda a=asunto, f=fecha_str, adj=adjuntos, c=os.path.basename(ruta_final):
-                            self._mail_tree.insert("", "end", values=("✓", a[:80], f[:25], str(adj), c)))
+                            self._mail_tree.insert("", "end", values=("✓", a[:80], f, str(adj), c)))
                 else:
                     nombre_carpeta = self._mail_nombre_carpeta(ruta_contenedores, carpeta_temp)
                     ruta_final = os.path.join(escritorio, nombre_carpeta)
@@ -621,7 +680,7 @@ class DescargaMixin:
                     os.rename(carpeta_temp, ruta_final)
                     resultados.append((asunto, adj_nombres, nombre_carpeta))
                     self.after(0, lambda a=asunto, f=fecha_str, adj=adjuntos, c=os.path.basename(ruta_final):
-                        self._mail_tree.insert("", "end", values=("✓", a[:80], f[:25], str(adj), c)))
+                        self._mail_tree.insert("", "end", values=("✓", a[:80], f, str(adj), c)))
             mail.logout()
             self._log(f"COMPLETADO: {encontrados} mails procesados. Archivos guardados en el Escritorio.")
         except Exception as e:
@@ -670,7 +729,7 @@ class DescargaMixin:
                 for fecha_dt, fecha_str, mid, asunto in seleccionados:
                     item_id = self._mail_tree.insert(
                         "", "end",
-                        values=("☐", asunto[:80], fecha_str[:25], "—", "—"),
+                        values=("☐", asunto[:80], fecha_str, "—", "—"),
                     )
                     self._mail_data[item_id] = {
                         "mid": mid, "asunto": asunto,
