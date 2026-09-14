@@ -1985,6 +1985,19 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         if not ok:
             return
         self._guardar_config()
+        # Liberar el Excel residual del worker de impresion (si un trabajo
+        # termino por camino de error, la instancia podia quedar viva lockeando
+        # archivos del Desktop y congelando el Explorador hasta el teardown).
+        try:
+            excel_app = getattr(self, "_excel_app_worker", None)
+            if excel_app is not None:
+                try:
+                    excel_app.Quit()
+                except Exception:
+                    pass
+                self._excel_app_worker = None
+        except Exception:
+            pass
         self.destroy()
 
 # ── Punto de entrada ─────────────────────────────────────────────────────

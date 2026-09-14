@@ -615,10 +615,10 @@ class ImpresionMixin:
                                         settings = f"{settings},monochrome"
                                 self._log(f"     → Dorso {tipo}: {n} copias, escala {escala_pct}%, noscale,center")
                                 try:
-                                    subprocess.run(
-                                        [sumatra, "-print-to-default", "-print-settings", settings,
+                                    self._imp_run_sumatra(
+                                        sumatra,
+                                        ["-print-to-default", "-print-settings", settings,
                                          "-exit-when-done", ruta_print],
-                                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                                     )
                                 finally:
                                     try: os.unlink(tmp_pdf)
@@ -639,14 +639,11 @@ class ImpresionMixin:
                                 if "monochrome" not in settings:
                                     settings = f"{settings},monochrome"
                             self._log(f"     → Dorso {tipo}: {n} copias, fit,center")
-                            try:
-                                subprocess.run(
-                                    [sumatra, "-print-to-default", "-print-settings", settings,
-                                     "-exit-when-done", ruta],
-                                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
-                                )
-                            except Exception as e:
-                                self._log(f"     → ERROR SumatraPDF dorso: {e}")
+                            self._imp_run_sumatra(
+                                sumatra,
+                                ["-print-to-default", "-print-settings", settings,
+                                 "-exit-when-done", ruta],
+                            )
                     else:
                         for copia in range(n):
                             os.startfile(ruta, "print")
@@ -1121,6 +1118,7 @@ class ImpresionMixin:
                 continue
             ruta_excel = os.path.join(ruta, a)
             es_xlsx = a.lower().endswith(".xlsx")
+            wb = None
             try:
                 if es_xlsx:
                     wb = openpyxl.load_workbook(ruta_excel, read_only=True)
@@ -1161,10 +1159,15 @@ class ImpresionMixin:
                     if encontrado:
                         por_contenido.append((a, sn))
                         break
-                if es_xlsx:
-                    wb.close()
             except Exception:
                 continue
+            finally:
+                # Cierre garantizado: el except de arriba salteaba el close y
+                # cada Excel con error fugaba un handle read_only (lockeaba el
+                # archivo hasta cerrar el programa).
+                if wb is not None:
+                    try: wb.close()
+                    except Exception: pass
         return por_nombre if por_nombre else por_contenido
 
     def _imp_sumatra_exe(self):
@@ -1184,6 +1187,37 @@ class ImpresionMixin:
             if c and os.path.isfile(c):
                 return c
         return None
+
+    def _imp_run_sumatra(self, sumatra, args, timeout=300):
+        """Ejecuta SumatraPDF con timeout y kill garantizado.
+
+        Usa Popen + communicate con timeout explicito: si el trabajo se cuelga
+        (impresora offline, dialogo atascado), se mata el proceso para no dejar
+        jamas un SumatraPDF.exe colgado sosteniendo un PDF del Desktop.
+        Retorna True si el proceso termino con codigo 0.
+        """
+        import subprocess
+        try:
+            proc = subprocess.Popen(
+                [sumatra] + list(args),
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            try:
+                proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._log(f"     → SumatraPDF tardo mas de {timeout}s, matando proceso...")
+                try: proc.kill()
+                except Exception: pass
+                try: proc.communicate(timeout=30)
+                except Exception: pass
+                return False
+            if proc.returncode != 0:
+                self._log(f"     → SumatraPDF salio con codigo {proc.returncode}")
+                return False
+            return True
+        except Exception as e:
+            self._log(f"     → ERROR SumatraPDF: {e}")
+            return False
 
     def _imp_secuencia_paginas(self, ruta_pdf, copias, intercalar=False):
         """Secuencia literal de páginas para N copias.
@@ -1229,30 +1263,40 @@ class ImpresionMixin:
                 except ImportError:
                     return None
             import tempfile
-            doc = fitz.open(ruta_pdf)
-            if doc.page_count == 0:
-                try: doc.close()
-                except Exception: pass
+            doc = None
+            new_doc = None
+            try:
+                doc = fitz.open(ruta_pdf)
+                if doc.page_count == 0:
+                    return None
+
+                new_doc = fitz.open()
+                for i, page in enumerate(doc):
+                    src_rect = page.rect
+                    new_page = new_doc.new_page(width=src_rect.width, height=src_rect.height)
+                    new_w = src_rect.width * escala
+                    new_h = src_rect.height * escala
+                    x0 = (src_rect.width - new_w) / 2
+                    y0 = (src_rect.height - new_h) / 2
+                    dst_rect = fitz.Rect(x0, y0, x0 + new_w, y0 + new_h)
+                    new_page.show_pdf_page(dst_rect, doc, i)
+                fd, tmp_path = tempfile.mkstemp(suffix=".__scaled__.pdf")
+                os.close(fd)
+                new_doc.save(tmp_path, garbage=0, deflate=False)
+                return tmp_path
+            except Exception:
                 return None
-            
-            new_doc = fitz.open()
-            for i, page in enumerate(doc):
-                src_rect = page.rect
-                new_page = new_doc.new_page(width=src_rect.width, height=src_rect.height)
-                new_w = src_rect.width * escala
-                new_h = src_rect.height * escala
-                x0 = (src_rect.width - new_w) / 2
-                y0 = (src_rect.height - new_h) / 2
-                dst_rect = fitz.Rect(x0, y0, x0 + new_w, y0 + new_h)
-                new_page.show_pdf_page(dst_rect, doc, i)
-            fd, tmp_path = tempfile.mkstemp(suffix=".__scaled__.pdf")
-            os.close(fd)
-            new_doc.save(tmp_path, garbage=0, deflate=False)
-            try: new_doc.close()
-            except Exception: pass
-            try: doc.close()
-            except Exception: pass
-            return tmp_path
+            finally:
+                # Cierre garantizado: si show_pdf_page/save fallaba, el PDF
+                # origen quedaba mapeado en memoria (lockeado).
+                try:
+                    if new_doc is not None:
+                        new_doc.close()
+                except Exception: pass
+                try:
+                    if doc is not None:
+                        doc.close()
+                except Exception: pass
         except Exception:
             return None
 
@@ -1307,10 +1351,10 @@ class ImpresionMixin:
                         settings = f"{settings},monochrome"
                 self._log(f"     → Impresora predeterminada ({copias} copias, escala {escala_pct}%, noscale,center)")
                 try:
-                    subprocess.run(
-                        [sumatra, "-print-to-default", "-print-settings", settings,
+                    self._imp_run_sumatra(
+                        sumatra,
+                        ["-print-to-default", "-print-settings", settings,
                          "-exit-when-done", ruta_print],
-                        creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                     )
                 finally:
                     try: os.unlink(tmp_pdf)
@@ -1331,20 +1375,19 @@ class ImpresionMixin:
             if "monochrome" not in settings:
                 settings = f"{settings},monochrome"
         self._log(f"     → Impresora predeterminada ({copias} copias, fit,center)")
-        try:
-            subprocess.run(
-                [sumatra, "-print-to-default", "-print-settings", settings,
-                 "-exit-when-done", ruta_pdf],
-                creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
-            )
-        except Exception as e:
-            self._log(f"     → ERROR SumatraPDF: {e}")
+        if not self._imp_run_sumatra(
+            sumatra,
+            ["-print-to-default", "-print-settings", settings,
+             "-exit-when-done", ruta_pdf],
+        ):
             return False
         return True
 
     def _imp_excel_a_pdf(self, excel_app, ruta_excel, hojas=None):
         """Exporta hojas de Excel a PDF temp, aplica escala 92% del programa, retorna ruta."""
         import tempfile, os
+        wb = None
+        tmp_raw = None
         try:
             wb = excel_app.Workbooks.Open(
                 ruta_excel,
@@ -1354,27 +1397,40 @@ class ImpresionMixin:
             excel_app.ScreenUpdating = False
             excel_app.EnableEvents = False
             excel_app.DisplayAlerts = False
-            
+
             fd, tmp_raw = tempfile.mkstemp(suffix=".__excel_raw__.pdf")
             os.close(fd)
-            
+
             if hojas:
                 for h in hojas:
                     ws = wb.Worksheets(h)
                     ws.ExportAsFixedFormat(0, tmp_raw)  # xlTypePDF
             else:
                 wb.ExportAsFixedFormat(0, tmp_raw)
-            
-            wb.Close(SaveChanges=False)
-            
+
             # Aplicar escala 90% + monochrome (reusa _imp_preparar_pdf)
             tmp_scaled = self._imp_preparar_pdf(tmp_raw, escala=0.90)
             try: os.unlink(tmp_raw)
             except: pass
-            
+            tmp_raw = None
+
             return tmp_scaled if tmp_scaled else tmp_raw
         except Exception:
+            # No borrar tmp_raw aca: si la exportacion fallo a mitad de camino
+            # igual hay que limpiarlo (ver finally).
             return None
+        finally:
+            # Cierre garantizado: si ExportAsFixedFormat fallaba, el libro
+            # quedaba abierto en el excel_app compartido del worker y el
+            # archivo seguia lockeado durante todo el trabajo.
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            if tmp_raw is not None:
+                try: os.unlink(tmp_raw)
+                except: pass
 
     def _imp_enviar(self, ruta_archivo, impresora, descripcion, hojas=None, copias=1):
         """Envía un archivo a la impresora seleccionada. hojas=lista, copias=N."""
@@ -1424,10 +1480,10 @@ class ImpresionMixin:
                                     settings = f"{settings},monochrome"
                             self._log(f"     → Impresora predeterminada ({copias} copias, escala {escala_pct}%, noscale,center)")
                             try:
-                                subprocess.run(
-                                    [sumatra, "-print-to-default", "-print-settings", settings,
+                                self._imp_run_sumatra(
+                                    sumatra,
+                                    ["-print-to-default", "-print-settings", settings,
                                      "-exit-when-done", ruta_print],
-                                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
                                 )
                             finally:
                                 try: os.unlink(tmp_pdf)
@@ -1447,14 +1503,11 @@ class ImpresionMixin:
                         if "color" not in settings:
                             settings = f"{settings},color"
                     self._log(f"     → Impresora predeterminada ({copias} copias, fit,center)")
-                    try:
-                        subprocess.run(
-                            [sumatra, "-print-to-default", "-print-settings", settings,
-                             "-exit-when-done", ruta_archivo],
-                            creationflags=subprocess.CREATE_NO_WINDOW, timeout=300,
-                        )
-                    except Exception as e:
-                        self._log(f"     → ERROR SumatraPDF: {e}")
+                    self._imp_run_sumatra(
+                        sumatra,
+                        ["-print-to-default", "-print-settings", settings,
+                         "-exit-when-done", ruta_archivo],
+                    )
                     return True
                 self._log(f"     → SumatraPDF no disponible: enviando sin control de escala (puede cortarse)")
 
@@ -1499,11 +1552,15 @@ class ImpresionMixin:
 
     def _imp_excel_com(self, ruta, impresora, hojas=None, copias=1):
         """Imprime Excel con Python win32com (sin abrir ventana)."""
+        import pythoncom
+        import win32com.client
+        pythoncom.CoInitialize()
+        # DispatchEx: instancia propia e invisible del programa. Dispatch se
+        # engancharia al Excel del usuario y el Quit() de abajo se lo cerraria.
+        excel = None
+        wb = None
         try:
-            import pythoncom
-            import win32com.client
-            pythoncom.CoInitialize()
-            excel = win32com.client.Dispatch("Excel.Application")
+            excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
             # Imprimir siempre en la impresora predeterminada del sistema:
@@ -1529,13 +1586,24 @@ class ImpresionMixin:
                 wb.PrintOut(1, 9999, copias)
                 self._log(f"     → OK ({copias} copias)")
 
-            wb.Close(SaveChanges=False)
-            excel.Quit()
             return True
         except Exception as e:
             self._log(f"     → Error COM: {e}")
             return False
         finally:
+            # Cierre garantizado: sin esto, un error entre Open y Close dejaba
+            # el libro y el EXCEL.EXE vivos lockeando el archivo (freeze del
+            # Explorador hasta cerrar el programa).
+            try:
+                if wb is not None:
+                    wb.Close(SaveChanges=False)
+            except Exception:
+                pass
+            try:
+                if excel is not None:
+                    excel.Quit()
+            except Exception:
+                pass
             try:
                 pythoncom.CoUninitialize()
             except Exception:
