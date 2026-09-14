@@ -819,6 +819,10 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         if nombre == "impresion":
             self.after(50, self._imp_escanear_carpetas)
 
+        # Refrescar lista al entrar al panel de backup (como impresión)
+        if nombre == "backup":
+            self.after(50, self._refrescar_lista_backup)
+
         # Actualizar título y navegación
         idx_map = {"descargar": 0, "impresion": 1, "planillas": 2, "cargar-datos": 3, "correos": 4, "backup": 5, "ajustes": 6}
         idx = idx_map.get(nombre, 1)

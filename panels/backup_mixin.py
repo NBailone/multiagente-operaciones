@@ -48,6 +48,17 @@ class BackupMixin:
         )
         self.btn_backup_pendrive.pack(side="left", padx=4, pady=4)
 
+        self.btn_backup_refresh = ctk.CTkButton(
+            toolbar,
+            text="Refrescar",
+            image=self._icons["refresh-cw"], compound="left",
+            font=ctk.CTkFont(family=FONT_FAMILY, size=12),
+            fg_color=Palette.BG_HOVER, hover_color=Palette.ACCENT_DIM,
+            text_color=Palette.TEXT_PRIMARY, corner_radius=6, height=34,
+            command=self._refrescar_lista_backup,
+        )
+        self.btn_backup_refresh.pack(side="left", padx=4, pady=4)
+
         self.lbl_estado_backup = ctk.CTkLabel(
             toolbar,
             text="Listo para respaldar",
