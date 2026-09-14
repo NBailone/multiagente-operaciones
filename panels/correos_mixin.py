@@ -633,7 +633,10 @@ class CorreosMixin:
 
             planillas_ordenadas = sorted(terr_planillas, key=_sort_key_terrestre)
 
-            cuerpo = "Estimados,\n\nSe adjuntan las planillas de carga correspondientes:\n\n"
+            if len(planillas_ordenadas) == 1:
+                cuerpo = "Estimados,\n\nSe adjunta la planilla de carga correspondiente:\n\n"
+            else:
+                cuerpo = "Estimados,\n\nSe adjuntan las planillas de carga correspondientes:\n\n"
             for p in planillas_ordenadas:
                 nombre_sin_ext = os.path.splitext(os.path.basename(p))[0]
                 cuerpo += f"  • {nombre_sin_ext}\n"
