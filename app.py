@@ -226,10 +226,13 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         self.protocol("WM_DELETE_WINDOW", self._confirmar_salida)
         # Destroy popups on minimize to prevent grab deadlock
         self._open_popups = set()
+        self._pw_dialog = None  # ref al diálogo de contraseña inicial (si está abierto)
         self.bind("<Unmap>", self._on_main_unmap)
+        self.bind("<Map>", self._on_main_map)
 
-        # Verificar contraseña maestra al iniciar, luego diagnóstico
-        self.after(300, self._verificar_inicio)
+        # La contraseña inicial la dispara _on_main_map (evento <Map>).
+        # Se eliminó el after(300) duplicado que competía con <Map> y
+        # generaba 2 diálogos al abrir.
         # Precargar paneles en segundo plano: navegación instantánea después
         self.after(1500, self._precargar_paneles)
 
@@ -307,6 +310,9 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
 
     def _on_main_unmap(self, event):
         """When main window is minimized, destroy all open popups to release grabs."""
+        # Solo reaccionar al minimize de la ventana principal, no al de hijos.
+        if event.widget is not self:
+            return
         for popup in list(self._open_popups):
             try:
                 popup.grab_release()
@@ -329,13 +335,51 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
                 except Exception:
                     pass
 
+    def _pw_dialog_abierto(self):
+        """True si el diálogo de contraseña inicial sigue vivo."""
+        dlg = getattr(self, "_pw_dialog", None)
+        try:
+            return dlg is not None and dlg.winfo_exists()
+        except Exception:
+            return False
+
+    def _on_main_map(self, event):
+        """Al restaurar la ventana, re-mostrar el password si nunca se validó.
+
+        Sin esto, minimizar destruía el diálogo (vía _on_main_unmap) y al
+        volver la app quedaba accesible sin contraseña.
+        """
+        if event.widget is not self:
+            return
+        if getattr(self, "_pw_inicio_valida", True):
+            return
+        if self._pw_dialog_abierto():
+            return
+        if getattr(self, "_pw_map_pending", False):
+            return
+        self._pw_map_pending = True
+
+        def _do_check():
+            self._pw_map_pending = False
+            self._verificar_inicio()
+
+        # Diferir un tick para que la ventana termine de restaurarse antes
+        # de aplicar el grab del diálogo modal.
+        try:
+            self.after(100, _do_check)
+        except Exception:
+            self._pw_map_pending = False
+
     def _verificar_inicio(self):
-        if not self._pw_inicio_valida:
+        if not self._pw_inicio_valida and not self._pw_dialog_abierto():
             self._mostrar_dialogo_password()
 
     def _mostrar_dialogo_password(self):
         pw_config = self._cfg_obtener("seguridad", "password", "")
         dlg = ctk.CTkToplevel(self)
+        # Registrar de inmediato para que _pw_dialog_abierto() lo detecte
+        # aunque otro callback de after() se ejecute en el medio.
+        self._pw_dialog = dlg
         dlg.title("Acceso Restringido")
         dlg.geometry("400x215")
         dlg.configure(fg_color=Palette.BG_CARD)
@@ -345,8 +389,20 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         dlg.minsize(400, 215)
         dlg.update_idletasks()
 
+        def _cerrar_dialogo(cerrar_app=True):
+            self._pw_dialog = None
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+            if cerrar_app:
+                try:
+                    self.destroy()
+                except Exception:
+                    pass
+
         # Cerrar con X = cerrar la aplicación (no permitir acceso sin autenticar)
-        dlg.protocol("WM_DELETE_WINDOW", lambda: (dlg.destroy(), self.destroy()))
+        dlg.protocol("WM_DELETE_WINDOW", _cerrar_dialogo)
 
         px = self.winfo_x() + (self.winfo_width() - 400) // 2
         py = self.winfo_y() + (self.winfo_height() - 215) // 2
@@ -371,7 +427,11 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
         def verificar():
             if entry_pw.get() == pw_config:
                 self._master_pw_cache = entry_pw.get()
-                dlg.destroy()
+                self._pw_dialog = None
+                try:
+                    dlg.destroy()
+                except Exception:
+                    pass
                 self._pw_inicio_valida = True
             else:
                 lbl_status.configure(text="Contraseña incorrecta. Intentá de nuevo.", text_color=Palette.ERROR)
@@ -414,7 +474,7 @@ class App(ctk.CTk, ImpresionMixin, PlanillasMixin, CorreosMixin, DescargaMixin,
             font=ctk.CTkFont(family=FONT_FAMILY, size=13, weight="bold"),
             fg_color=Palette.BG_HOVER, hover_color=Palette.ERROR,
             text_color=Palette.TEXT_SECONDARY, corner_radius=6,
-            command=lambda: (dlg.destroy(), self.destroy()),
+            command=_cerrar_dialogo,
         ).pack(side="left", padx=5)
 
     # ── Sidebar ──────────────────────────────────────────────────────────
